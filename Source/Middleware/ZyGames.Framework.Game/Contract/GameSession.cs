@@ -31,14 +31,42 @@ using ProtoBuf;
 using System.Threading;
 using System.Collections.Concurrent;
 using ZyGames.Framework.Common;
+using ZyGames.Framework.Common.Locking;
 using ZyGames.Framework.Common.Log;
 using ZyGames.Framework.Common.Serialization;
+using ZyGames.Framework.Game.Context;
 using ZyGames.Framework.Game.Runtime;
 using ZyGames.Framework.Redis;
 using ZyGames.Framework.RPC.Sockets;
 
 namespace ZyGames.Framework.Game.Contract
 {
+    /// <summary>
+    /// 
+    /// </summary>
+    public class SessionPushEventArgs : EventArgs
+    {
+        /// <summary>
+        /// 
+        /// </summary>
+        public ExSocket Socket { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        public int OpCode { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        public byte[] Data { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        public int Offset { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        public int Count { get; set; }
+    }
     /// <summary>
     /// 用户会话
     /// </summary>
@@ -47,16 +75,22 @@ namespace ZyGames.Framework.Game.Contract
     {
         private static ConcurrentDictionary<Guid, GameSession> _globalSession;
         private static ConcurrentDictionary<int, Guid> _userHash;
+        private static ConcurrentDictionary<string, Guid> _remoteHash;
         private static Timer clearTime;
         private static string sessionRedisKey = "__GLOBAL_SESSIONS";
+        private static int _isChanged;
 
         static GameSession()
         {
-            Timeout = 600;
-            clearTime = new Timer(OnClearSession, null, new TimeSpan(0, 0, 60), new TimeSpan(0, 0, 10));
+            HeartbeatTimeout = 60;//60s
+            RequestTimeout = 1000;
+            Timeout = 2 * 60 * 60;//2H
+            clearTime = new Timer(OnClearSession, null, 60000, 60000);
+
             _globalSession = new ConcurrentDictionary<Guid, GameSession>();
             _userHash = new ConcurrentDictionary<int, Guid>();
-            LoadUnLineData();
+            _remoteHash = new ConcurrentDictionary<string, Guid>();
+            //LoadUnLineData();//不能恢复user对象
         }
 
         private static void LoadUnLineData()
@@ -73,7 +107,12 @@ namespace ZyGames.Framework.Game.Contract
                     var temp = ProtoBufUtils.Deserialize<ConcurrentDictionary<Guid, GameSession>>(data);
                     if (temp != null)
                     {
-                        _globalSession = temp;
+                        var paris = temp.Where(p =>
+                        {
+                            p.Value.UserId = 0;//reset userid
+                            return !p.Value.CheckExpired();
+                        }).ToArray();
+                        _globalSession = new ConcurrentDictionary<Guid, GameSession>(paris);
                     }
                 });
             }
@@ -87,8 +126,9 @@ namespace ZyGames.Framework.Game.Contract
         {
             try
             {
-                byte[] data = ProtoBufUtils.Serialize(_globalSession);
-                RedisConnectionPool.Process(client => client.Set(sessionRedisKey, data));
+                //不能恢复user对象 不需要存储
+                //byte[] data = ProtoBufUtils.Serialize(_globalSession);
+                //RedisConnectionPool.Process(client => client.Set(sessionRedisKey, data));
             }
             catch (Exception er)
             {
@@ -102,13 +142,38 @@ namespace ZyGames.Framework.Game.Contract
         public static int Count { get { return _globalSession.Count; } }
 
         /// <summary>
-        /// session timeout(sec).
+        /// Heartbeat timeout(sec), default 60s
+        /// </summary>
+        public static int HeartbeatTimeout { get; set; }
+
+        /// <summary>
+        /// session timeout(sec), default 2h
         /// </summary>
         public static int Timeout { get; set; }
+        /// <summary>
+        /// Request timeout(ms), default 1s
+        /// </summary>
+        public static int RequestTimeout { get; set; }
 
         private static string GenerateSid(Guid guid)
         {
             return string.Format("s_{0}|{1}|{2}", guid.ToString("N"), GameEnvironment.ProductCode, GameEnvironment.ProductServerId);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public static void ClearSession(Predicate<GameSession> match)
+        {
+            foreach (var pair in _globalSession)
+            {
+                var session = pair.Value;
+                if (session == null) continue;
+                if (match(session))
+                {
+                    session.Reset();
+                }
+            }
         }
 
         private static void OnClearSession(object state)
@@ -118,19 +183,32 @@ namespace ZyGames.Framework.Game.Contract
                 foreach (var pair in _globalSession)
                 {
                     var session = pair.Value;
-                    if (session.LastActivityTime < MathUtils.Now.AddSeconds(-Timeout))
+                    if (session == null) continue;
+
+                    if (session.CheckExpired())
                     {
-                        pair.Value.Close();
-                        //todo session clear
+                        //todo session
                         TraceLog.ReleaseWriteDebug("User {0} sessionId{1} is expire {2}({3}sec)",
                             session.UserId,
                             session.SessionId,
                             session.LastActivityTime,
                             Timeout);
+                        session.DoHeartbeatTimeout();
+                        session.Reset();
 
                     }
+                    else if (!session.IsHeartbeatTimeout &&
+                        HeartbeatTimeout > 0 &&
+                        session.LastActivityTime < MathUtils.Now.AddSeconds(-HeartbeatTimeout))
+                    {
+                        session.DoHeartbeatTimeout();
+                    }
                 }
-                SaveTo();
+                if (_isChanged == 1)
+                {
+                    SaveTo();
+                    Interlocked.Exchange(ref _isChanged, 0);
+                }
             }
             catch (Exception er)
             {
@@ -163,10 +241,10 @@ namespace ZyGames.Framework.Game.Contract
         /// </summary>
         /// <param name="keyCode"></param>
         /// <param name="socket"></param>
-        /// <param name="sendCallback"></param>
-        public static GameSession CreateNew(Guid keyCode, ExSocket socket, Action<ExSocket, byte[], int, int> sendCallback)
+        /// <param name="appServer"></param>
+        public static GameSession CreateNew(Guid keyCode, ExSocket socket, ISocket appServer)
         {
-            return OnCreate(keyCode, socket, sendCallback);
+            return OnCreate(keyCode, socket, appServer);
         }
 
         private static GameSession OnCreate(Guid keyCode, params object[] args)
@@ -179,14 +257,15 @@ namespace ZyGames.Framework.Game.Contract
             else if (args.Length == 2 && args[0] is ExSocket)
             {
                 ExSocket socket = args[0] as ExSocket;
-                var sendCallback = args[1] as Action<ExSocket, byte[], int, int>;
-                session = new GameSession(keyCode, socket, sendCallback);
+                var appServer = args[1] as ISocket;
+                session = new GameSession(keyCode, socket, appServer);
             }
             else
             {
                 throw new ArgumentOutOfRangeException("param is error");
             }
             _globalSession[keyCode] = session;
+            OnChangedSave();
             return session;
         }
 
@@ -196,19 +275,31 @@ namespace ZyGames.Framework.Game.Contract
         /// <param name="session"></param>
         /// <param name="newSessionKey"></param>
         /// <param name="socket"></param>
-        /// <param name="sendCallback"></param>
+        /// <param name="appServer"></param>
         /// <returns></returns>
-        public static void Recover(GameSession session, Guid newSessionKey, ExSocket socket, Action<ExSocket, byte[], int, int> sendCallback)
+        public static void Recover(GameSession session, Guid newSessionKey, ExSocket socket, ISocket appServer)
         {
             var newSession = Get(newSessionKey);
             if (session != null &&
                 newSession != null &&
                 session != newSession)
             {
+                try
+                {
+                    session._exSocket.Close();
+                }
+                catch
+                {
+                }
+                //modify socket's keycod not found reason
+                socket.Reset(session.KeyCode);
                 session._exSocket = socket;
-                session._sendCallback = sendCallback;
+                session.AppServer = appServer;
                 GameSession temp;
-                _globalSession.TryRemove(newSessionKey, out temp);
+                if (_globalSession.TryRemove(newSessionKey, out temp))
+                {
+                    OnChangedSave();
+                }
             }
         }
 
@@ -272,17 +363,133 @@ namespace ZyGames.Framework.Game.Contract
             return _globalSession.Values.ToList();
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="proxyId"></param>
+        /// <returns></returns>
+        public static GameSession GetRemote(string proxyId)
+        {
+            Guid val;
+            return _remoteHash.TryGetValue(proxyId, out val) ? Get(val) : null;
+        }
+        /// <summary>
+        /// Get remote all
+        /// </summary>
+        /// <returns></returns>
+        public static List<GameSession> GetRemoteAll()
+        {
+            return _remoteHash.Select(pair => Get(pair.Value)).ToList();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public static List<GameSession> GetOnlineAll()
+        {
+            return GetOnlineAll(HeartbeatTimeout);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public static List<GameSession> GetOnlineAll(int delayTime)
+        {
+            List<GameSession> list = new List<GameSession>();
+            foreach (var pair in _globalSession)
+            {
+                var session = pair.Value;
+                if (!session.IsRemote &&
+                    (!session.IsSocket || session.Connected) &&
+                    session.LastActivityTime > MathUtils.Now.AddSeconds(-delayTime))
+                {
+                    list.Add(session);
+                }
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        public static GameSession GetSessionByCookie(HttpRequest request)
+        {
+            var cookie = request.Cookies.Get("sid");
+            if (cookie != null && !string.IsNullOrEmpty(cookie.Value))
+            {
+                return Get(cookie.Value);
+            }
+            return null;
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="request"></param>
+        /// <returns></returns>
+        public static GameSession GetSessionByCookie(HttpListenerRequest request)
+        {
+            var cookie = request.Cookies["sid"];
+            if (cookie != null && !string.IsNullOrEmpty(cookie.Value))
+            {
+                return Get(cookie.Value);
+            }
+            return null;
+        }
+
         private string _remoteAddress;
         private int _isInSession;
-        private readonly object _request;
         private ExSocket _exSocket;
-        private Action<ExSocket, byte[], int, int> _sendCallback;
+        /// <summary>
+        /// 
+        /// </summary>
+        public ISocket AppServer { get; private set; }
+
+        /// <summary>
+        /// Heartbeat Timeout event
+        /// </summary>
+        public event Action<GameSession> HeartbeatTimeoutHandle;
+
+        private void DoHeartbeatTimeout()
+        {
+            try
+            {
+                IsHeartbeatTimeout = true;
+                Action<GameSession> handler = HeartbeatTimeoutHandle;
+                if (handler != null) handler(this);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private readonly LockCachePool _monitorLock;
+
+        /// <summary>
+        /// 获得锁
+        /// </summary>
+        public bool EnterLock(int actionId)
+        {
+            return _monitorLock.TryEnter(actionId, RequestTimeout);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="actionId"></param>
+        public void ExitLock(int actionId)
+        {
+            _monitorLock.Exit(actionId);
+        }
 
         /// <summary>
         /// init proto deserialize use
         /// </summary>
         private GameSession()
         {
+            _monitorLock = new LockCachePool();
             Refresh();
         }
 
@@ -291,17 +498,9 @@ namespace ZyGames.Framework.Game.Contract
         {
             KeyCode = keyCode;
             SessionId = GenerateSid(KeyCode);
-            _request = request;
             if (request is HttpRequest)
             {
                 HttpRequest req = ((HttpRequest)request);
-                var cookie = req.Cookies.Get("sid");
-                if (cookie == null)
-                {
-                    cookie = new HttpCookie("sid", SessionId);
-                    cookie.Expires = DateTime.Now.AddMinutes(2);
-                    req.Cookies.Add(cookie);
-                }
                 _remoteAddress = req.UserHostAddress;
             }
             else if (request is HttpListenerRequest)
@@ -312,28 +511,76 @@ namespace ZyGames.Framework.Game.Contract
             }
         }
 
-        private GameSession(Guid sid, ExSocket exSocket, Action<ExSocket, byte[], int, int> sendCallback)
+        private GameSession(Guid sid, ExSocket exSocket, ISocket appServer)
             : this(sid, null)
         {
-            InitSocket(exSocket, sendCallback);
+            InitSocket(exSocket, appServer);
         }
 
-        private void InitSocket(ExSocket exSocket, Action<ExSocket, byte[], int, int> sendCallback)
+        private void InitSocket(ExSocket exSocket, ISocket appServer)
         {
             _exSocket = exSocket;
-            _sendCallback = sendCallback;
+            _remoteAddress = _exSocket.RemoteEndPoint.ToNotNullString();
+            AppServer = appServer;
         }
 
-        internal void Refresh()
-        {
-            LastActivityTime = DateTime.Now;
-        }
         /// <summary>
-        /// bind Identity userid
+        /// 
         /// </summary>
-        public void BindIdentity(int userId)
+        public void Refresh()
         {
+            IsTimeout = false;
+            IsHeartbeatTimeout = false;
+            LastActivityTime = DateTime.Now;
+            if (User != null)
+            {
+                User.RefleshOnlineDate();
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="user"></param>
+        public void Bind(IUser user)
+        {
+            int userId = user.GetUserId();
+            if (userId > 0)
+            {
+                //解除UserId与前一次的Session连接对象绑定
+                Guid sid;
+                if (_userHash.TryGetValue(userId, out sid) && sid != KeyCode)
+                {
+                    var session = Get(sid);
+                    if (session != null)
+                    {
+                        session.UnBind();
+                    }
+                }
+            }
+            _userHash[userId] = KeyCode;
             UserId = userId;
+            User = user;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public void UnBind()
+        {
+            User = null;
+            UserId = 0;
+            OldSessionId = SessionId;
+            LastActivityTime = DateTime.MinValue;
+        }
+
+        /// <summary>
+        /// Is authorized.
+        /// </summary>
+        [JsonIgnore]
+        public bool IsAuthorized
+        {
+            get { return User != null && UserId > 0; }
         }
 
         /// <summary>
@@ -346,27 +593,84 @@ namespace ZyGames.Framework.Game.Contract
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        [JsonIgnore]
+        public bool IsRemote
+        {
+            get { return !string.IsNullOrEmpty(ProxyId); }
+        }
+        /// <summary>
         /// Close
         /// </summary>
         public void Close()
         {
             GameSession session;
-            if (_globalSession.TryRemove(KeyCode, out session))
+            if (_globalSession.TryGetValue(KeyCode, out session) && session._exSocket != null)
+            {
+                //设置Socket为Closed的状态, 并未将物理连接马上中断
+                session._exSocket.IsClosed = true;
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns>true:is expired</returns>
+        private bool CheckExpired()
+        {
+            return LastActivityTime < MathUtils.Now.AddSeconds(-Timeout);
+        }
+
+        private void Reset()
+        {
+            IsTimeout = true;
+            if (_exSocket != null)
             {
                 try
                 {
-                    session._exSocket.WorkSocket.Close();
+                    //设置Socket为Closed的状态, 并未将物理连接马上中断
+                    _exSocket.IsClosed = true;
+                    _exSocket.Close();
                 }
                 catch { }
             }
             Guid code;
-            _userHash.TryRemove(UserId, out code);
+            if (_userHash.TryRemove(UserId, out code))
+            {
+                UnBind();
+            }
+
+            if (!string.IsNullOrEmpty(ProxyId)) _remoteHash.TryRemove(ProxyId, out code);
+            GameSession session;
+            if (_globalSession.TryRemove(KeyCode, out session))
+            {
+                session._monitorLock.Clear();
+            }
+        }
+
+
+        private static void OnChangedSave()
+        {
+            Interlocked.Exchange(ref _isChanged, 1);
         }
 
         /// <summary>
         /// Remote end address
         /// </summary>
         [JsonIgnore]
+        public string RemoteAddress
+        {
+            get
+            {
+                return _remoteAddress;
+            }
+        }
+        /// <summary>
+        /// Remote end address
+        /// </summary>
+        [JsonIgnore]
+        [Obsolete]
         public string EndAddress
         {
             get
@@ -392,36 +696,20 @@ namespace ZyGames.Framework.Game.Contract
         [ProtoMember(2)]
         public string SessionId { get; private set; }
 
-        private int _userId;
-
         /// <summary>
         /// login UserId
         /// </summary>
         [ProtoMember(3)]
-        public int UserId
-        {
-            get { return _userId; }
-            private set
-            {
-                _userId = value;
-                if (_userId > 0)
-                {
-                    Guid sid;
-                    if (_userHash.TryGetValue(_userId, out sid))
-                    {
-                        var session = Get(sid);
-                        if (session != null)
-                        {
-                            session.UserId = 0;
-                        }
-                    }
-                    _userHash[_userId] = KeyCode;
-                }
-            }
-        }
+        public int UserId { get; private set; }
 
         /// <summary>
-        /// Gets or sets ssid identifier by the server proxy.
+        /// User
+        /// </summary>
+        [JsonIgnore]
+        public IUser User { get; private set; }
+
+        /// <summary>
+        /// 远程代理客户端的会话ID
         /// </summary>
         [ProtoMember(4)]
         public Guid ProxySid { get; internal set; }
@@ -433,6 +721,46 @@ namespace ZyGames.Framework.Game.Contract
         public DateTime LastActivityTime { get; internal set; }
 
         /// <summary>
+        /// 是否会话超时
+        /// </summary>
+        [JsonIgnore]
+        public bool IsTimeout { get; set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        [JsonIgnore]
+        public bool IsHeartbeatTimeout { get; set; }
+
+        private string _proxyId;
+
+        /// <summary>
+        /// 远程代理客户端的标识ID
+        /// </summary>
+        [ProtoMember(6)]
+        public string ProxyId
+        {
+            get { return _proxyId; }
+            set
+            {
+                _proxyId = value;
+                if (!string.IsNullOrEmpty(_proxyId))
+                {
+                    _remoteHash[_proxyId] = KeyCode;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 是否标识关闭状态
+        /// </summary>
+        [JsonIgnore]
+        public bool IsClosed
+        {
+            get { return _exSocket != null && _exSocket.IsClosed; }
+        }
+
+        /// <summary>
         /// 是否已连接
         /// </summary>
         [JsonIgnore]
@@ -442,7 +770,7 @@ namespace ZyGames.Framework.Game.Contract
             {
                 try
                 {
-                    return _exSocket != null ? _exSocket.WorkSocket.Connected : false;
+                    return _exSocket != null && _exSocket.Connected;
                 }
                 catch
                 {
@@ -461,32 +789,65 @@ namespace ZyGames.Framework.Game.Contract
         }
 
         /// <summary>
-        /// Post send to client
+        /// is websocket
         /// </summary>
-        /// <param name="data"></param>
-        /// <param name="offset"></param>
-        /// <param name="count"></param>
-        public void PostSend(byte[] data, int offset, int count)
+        [JsonIgnore]
+        public bool IsWebSocket
         {
-            _sendCallback(_exSocket, data, offset, count);
+            get { return _exSocket != null && _exSocket.IsWebSocket; }
         }
 
         /// <summary>
-        /// Send async, add 16 len head
+        /// Post send to client
+        /// </summary>
+        /// <param name="opCode"></param>
+        /// <param name="data"></param>
+        /// <param name="offset"></param>
+        /// <param name="count"></param>
+        /// <param name="callback"></param>
+        private async System.Threading.Tasks.Task<bool> PostSend(sbyte opCode, byte[] data, int offset, int count, Action<SocketAsyncResult> callback)
+        {
+            if (!IsSocket)
+            {
+                TraceLog.WriteError("Session does not support the push message");
+                return false;
+            }
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+            await AppServer.PostSend(_exSocket, opCode, data, offset, count, callback);
+            return true;
+        }
+
+        /// <summary>
+        /// 
         /// </summary>
         /// <param name="data"></param>
         /// <param name="offset"></param>
         /// <param name="count"></param>
         /// <returns></returns>
-        public bool SendAsync(byte[] data, int offset, int count)
+        public async System.Threading.Tasks.Task<bool> SendAsync(byte[] data, int offset, int count)
         {
-            if (Connected)
+            if (!IsRemote)
             {
                 data = CheckAdditionalHead(data, ProxySid);
-                PostSend(data, 0, data.Length);
-                return true;
             }
-            return false;
+            return await SendAsync(OpCode.Binary, data, offset, count, result => { });
+        }
+
+        /// <summary>
+        /// Send async, add 16 len head
+        /// </summary>
+        /// <param name="opCode"></param>
+        /// <param name="data"></param>
+        /// <param name="offset"></param>
+        /// <param name="count"></param>
+        /// <param name="callback"></param>
+        /// <returns></returns>
+        public async System.Threading.Tasks.Task<bool> SendAsync(sbyte opCode, byte[] data, int offset, int count, Action<SocketAsyncResult> callback)
+        {
+            return await PostSend(opCode, data, 0, data.Length, callback);
         }
         /// <summary>
         /// 检查加头16位ssid

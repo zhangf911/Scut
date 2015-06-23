@@ -33,15 +33,20 @@ namespace ZyGames.Framework.Game.Sns
         /// <summary>
         /// 
         /// </summary>
-        string PassportID { get; }
+        string PassportID { get;}
         /// <summary>
         /// 
         /// </summary>
         string UserID { get; }
+
+        /// <summary>
+        /// 用户类型
+        /// </summary>
+        int UserType { get; }
         /// <summary>
         /// 
         /// </summary>
-        string Password { get; }
+        string Password { get; set; }
         /// <summary>
         /// 
         /// </summary>

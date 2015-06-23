@@ -1,6 +1,30 @@
-﻿using System;
+﻿/****************************************************************************
+Copyright (c) 2013-2015 scutgame.com
+
+http://www.scutgame.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+****************************************************************************/
+using System;
 using ServiceStack.Text;
 using ZyGames.Framework.Game.Contract;
+using ZyGames.Framework.Script;
 
 namespace ZyGames.Framework.Game.Service
 {
@@ -13,15 +37,47 @@ namespace ZyGames.Framework.Game.Service
         /// 
         /// </summary>
         protected RequestPackage ReqPackage;
+        /// <summary>
+        /// 
+        /// </summary>
+        protected GameSession _session;
 
         /// <summary>
         /// init
         /// </summary>
         /// <param name="package"></param>
-        public ActionGetter(RequestPackage package)
+        /// <param name="session"></param>
+        public ActionGetter(RequestPackage package, GameSession session)
         {
             ReqPackage = package;
+            _session = session;
+            OpCode = package.OpCode;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public RequestPackage RequestPackage
+        {
+            get { return ReqPackage; }
+        }
+
+        /// <summary>
+        /// get request input bytes, socket use '\r\n\r\n' split message.
+        /// </summary>
+        public byte[] InputStreamBytes
+        {
+            get
+            {
+                return ReqPackage.Message as byte[];
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public sbyte OpCode { get; set; }
 
         /// <summary>
         /// MsgId
@@ -46,7 +102,14 @@ namespace ZyGames.Framework.Game.Service
         {
             return ReqPackage.ActionId;
         }
-
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public virtual string GetRouteName()
+        {
+            return ReqPackage.RouteName;
+        }
         /// <summary>
         /// get current UserId.
         /// </summary>
@@ -54,21 +117,33 @@ namespace ZyGames.Framework.Game.Service
         {
             return ReqPackage.UserId;
         }
-
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public virtual string GetSessionId()
+        {
+            return SessionId;
+        }
         /// <summary>
         /// get current sessionid.
         /// </summary>
-        public virtual string GetSessionId()
-        {
-            return ReqPackage.SessionId;
-        }
+        public string SessionId { get { return _session != null ? _session.SessionId : ""; } }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public GameSession GetSession()
+        {
+            return Session;
+        }
         /// <summary>
         /// get current session.
         /// </summary>
-        public virtual GameSession GetSession()
+        public GameSession Session
         {
-            return ReqPackage.Session;
+            get { return _session; }
         }
 
         /// <summary>
@@ -98,6 +173,17 @@ namespace ZyGames.Framework.Game.Service
         }
 
         #region httpGet notImplement method
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        public virtual string this[string key]
+        {
+            get { throw new NotImplementedException(); }
+            set { throw new NotImplementedException(); }
+        }
+
         /// <summary>
         /// 
         /// </summary>
@@ -167,6 +253,7 @@ namespace ZyGames.Framework.Game.Service
         /// <summary>
         /// 
         /// </summary>
+        [LuaMethod("ActionGetter_GetInt")]
         public virtual int GetInt(string param)
         {
             throw new NotImplementedException();
@@ -246,6 +333,48 @@ namespace ZyGames.Framework.Game.Service
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="aName"></param>
+        /// <param name="rValue"></param>
+        /// <returns></returns>
+        public virtual bool GetInt(string aName, ref uint rValue)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public virtual bool GetInt(string aName, ref uint rValue, uint minValue, uint maxValue)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public virtual bool GetWord(string aName, ref ushort rValue)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public virtual bool GetWord(string aName, ref ushort rValue, ushort minValue, ushort maxValue)
+        {
+            throw new NotImplementedException();
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        public virtual bool GetBool(string aName, ref bool rValue)
+        {
+            throw new NotImplementedException();
+        }
+        
+        /// <summary>
+        /// 
+        /// </summary>
         public virtual bool GetByte(string aName, ref Byte rValue)
         {
             throw new NotImplementedException();
@@ -291,5 +420,6 @@ namespace ZyGames.Framework.Game.Service
             return true;
         }
         #endregion
+
     }
 }

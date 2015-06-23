@@ -88,6 +88,16 @@ namespace ZyGames.Framework.Data
             private set;
         }
 
+        /// <summary>
+        /// clear connection pools
+        /// </summary>
+        public abstract void ClearAllPools();
+
+        /// <summary>
+        /// Check connect
+        /// </summary>
+        /// <returns></returns>
+        public abstract void CheckConnect();
 
         /// <summary>
         /// 执行Sql语句
@@ -146,6 +156,12 @@ namespace ZyGames.Framework.Data
         /// <param name="columns"></param>
         /// <returns></returns>
         public abstract void CreateTable(string tableName, DbColumn[] columns);
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="indexs">index cloumn, ex:"col1,col2"</param>
+        public abstract void CreateIndexs(string tableName, string[] indexs);
 
         /// <summary>
         /// 创建列
@@ -181,13 +197,33 @@ namespace ZyGames.Framework.Data
         /// <returns></returns>
         public abstract IDataParameter CreateParameterByGuid(string paramName, object value);
         /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="paramName"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public abstract IDataParameter CreateParameterByLongText(string paramName, object value);
+        /// <summary>
         /// 创建Text类型的参数
         /// </summary>
         /// <param name="paramName"></param>
         /// <param name="value"></param>
         /// <returns></returns>
         public abstract IDataParameter CreateParameterByText(string paramName, object value);
-
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="paramName"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public abstract IDataParameter CreateParameterLongBlob(string paramName, object value);
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="paramName"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public abstract IDataParameter CreateParameterByBlob(string paramName, object value);
         /// <summary>
         /// 创建CommandStruct对象
         /// </summary>
@@ -249,5 +285,6 @@ namespace ZyGames.Framework.Data
         /// <param name="name"></param>
         /// <returns></returns>
         public abstract string FormatName(string name);
+
     }
 }

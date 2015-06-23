@@ -21,7 +21,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
-using ZyGames.Framework.Collection;
 
 namespace ZyGames.Framework.Net
 {
@@ -33,11 +32,20 @@ namespace ZyGames.Framework.Net
         /// <summary>
         /// 
         /// </summary>
+        public DbDataFilter()
+        {
+            Parameters = new Parameters();
+        }
+
+
+        /// <summary>
+        /// 
+        /// </summary>
         /// <param name="capacity"></param>
         public DbDataFilter(int capacity)
+            : this()
         {
             Capacity = capacity;
-            Parameters = new Parameters();
         }
 
         /// <summary>

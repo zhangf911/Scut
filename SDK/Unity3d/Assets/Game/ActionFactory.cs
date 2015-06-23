@@ -1,6 +1,6 @@
-﻿using System;
+using System;
 using System.Collections;
-using ZyGames.Framework.Common.Reflect;
+using UnityEngine;
 
 /// <summary>
 /// 游戏Action处理工厂
@@ -18,9 +18,9 @@ public abstract class ActionFactory
     public static GameAction Create(int actionId)
     {
         GameAction gameAction = null;
-        string name = string.Format(ActionFormat, actionId);
         try
         {
+            string name = string.Format(ActionFormat, actionId);
             var type = (Type)lookupType[name];
             lock (lookupType)
             {
@@ -32,12 +32,12 @@ public abstract class ActionFactory
             }
             if (type != null)
             {
-                gameAction = FastActivator.Create(type) as GameAction;
+                gameAction = Activator.CreateInstance(type) as GameAction;
             }
         }
         catch (Exception ex)
         {
-            UnityEngine.Debug.LogError("GameAction create error:" + ex);
+            Debug.LogError("GameAction create error:" + ex);
         }
         return gameAction;
     }

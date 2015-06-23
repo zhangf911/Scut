@@ -7,8 +7,6 @@ namespace GameWebServer
 {
     public class Global : System.Web.HttpApplication
     {
-        private dynamic _instance;
-
         protected void Application_Start(object sender, EventArgs e)
         {
             try
@@ -17,7 +15,10 @@ namespace GameWebServer
                 {
                     var setting = new EnvironmentSetting();
                     GameEnvironment.Start(setting);
-                    ScriptEngines.RunMainClass(out _instance);
+                    if (ScriptEngines.RunMainProgram())
+                    {
+                        GameEnvironment.IsRunning = true;
+                    }
                 }
             }
             catch (Exception ex)
@@ -53,10 +54,7 @@ namespace GameWebServer
 
         protected void Application_End(object sender, EventArgs e)
         {
-            if (_instance != null)
-            {
-                _instance.Stop();
-            }
+            ScriptEngines.StopMainProgram();
         }
     }
 }

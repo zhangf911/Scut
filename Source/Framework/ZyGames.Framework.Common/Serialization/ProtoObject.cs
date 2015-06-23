@@ -90,6 +90,12 @@ namespace ZyGames.Framework.Common.Serialization
                     return _intValue.Value;
                 if (_longValue.HasValue)
                     return _longValue.Value;
+                if (_ushortValue.HasValue)
+                    return _ushortValue.Value;
+                if (_uintValue.HasValue)
+                    return _uintValue.Value;
+                if (_ulongValue.HasValue)
+                    return _ulongValue.Value;
                 if (_floatValue.HasValue)
                     return _floatValue.Value;
                 if (_decimalValue.HasValue)
@@ -106,6 +112,8 @@ namespace ZyGames.Framework.Common.Serialization
                     return _charsValue;
                 if (_binaryArrayValue != null)
                     return _binaryArrayValue;
+                if (_guidValue != null)
+                    return _guidValue;
                 return _stringValue;
             }
             set
@@ -122,6 +130,12 @@ namespace ZyGames.Framework.Common.Serialization
                     _intValue = (int)value;
                 else if (value is long)
                     _longValue = (long)value;
+                else if (value is ushort)
+                    _ushortValue = (ushort)value;
+                else if (value is uint)
+                    _uintValue = (uint)value;
+                else if (value is ulong)
+                    _ulongValue = (ulong)value;
                 else if (value is float)
                     _floatValue = (float)value;
                 else if (value is decimal)
@@ -140,6 +154,8 @@ namespace ZyGames.Framework.Common.Serialization
                     _charsValue = (char[])value;
                 else if (value is byte[][])
                     _binaryArrayValue = (byte[][])value;
+                else if (value is Guid)
+                    _guidValue = (Guid)value;
                 else if (value == null)
                 {
                     _isnullValue = true;
@@ -198,7 +214,17 @@ namespace ZyGames.Framework.Common.Serialization
         private byte[][] _binaryArrayValue;
         // etc
 
+        [ProtoMember(16)]
+        private ushort? _ushortValue;
 
+        [ProtoMember(17)]
+        private uint? _uintValue;
+
+        [ProtoMember(18)]
+        private ulong? _ulongValue;
+
+        [ProtoMember(19)]
+        private Guid? _guidValue;
 
         #region ISerializable Members
         /// <summary>

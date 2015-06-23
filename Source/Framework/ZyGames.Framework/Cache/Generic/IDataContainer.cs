@@ -58,6 +58,10 @@ namespace ZyGames.Framework.Cache.Generic
         /// 
         /// </summary>
         LoadingStatus LoadStatus { get; }
+        /// <summary>
+        /// 
+        /// </summary>
+        CacheItemSet[] ChildrenItem { get;}
         ///// <summary>
         ///// 获取容器对象
         ///// </summary>
@@ -77,10 +81,16 @@ namespace ZyGames.Framework.Cache.Generic
         bool TryGetCache(string key, out CacheItemSet itemSet);
 
         /// <summary>
+        /// 遍历取
+        /// </summary>
+        T TakeEntityFromKey(string key);
+
+        /// <summary>
         /// 遍历实体
         /// </summary>
         /// <param name="func">遍历项委托方法，返回值为:false结束遍历</param>
         void ForeachEntity(Func<string, T, bool> func);
+
 
         /// <summary>
         /// 遍历
@@ -121,6 +131,11 @@ namespace ZyGames.Framework.Cache.Generic
         /// 加载全部数据
         /// </summary>
         LoadingStatus Load();
+
+        /// <summary>
+        /// 
+        /// </summary>
+        List<V> LoadFrom<V>(TransReceiveParam receiveParam) where V : AbstractEntity, new();
 
         /// <summary>
         /// 加载指定Key数据
@@ -266,5 +281,11 @@ namespace ZyGames.Framework.Cache.Generic
         /// <param name="key">Group键</param>
         void UnChangeNotify(string key);
 
+        /// <summary>
+        /// 尝试从DB中恢复数据
+        /// </summary>
+        /// <param name="receiveParam"></param>
+        /// <param name="dataList"></param>
+        bool TryRecoverFromDb<V>(TransReceiveParam receiveParam, out List<V> dataList) where V : AbstractEntity, new();
     }
 }

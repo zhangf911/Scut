@@ -25,6 +25,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Runtime.Caching;
 using System.Threading;
@@ -79,7 +80,8 @@ namespace ZyGames.Framework.Common.Timing
         private readonly CacheListenerHandle _listenerHandle;
         private readonly string _dependency;
         private CacheListenerHandle _callback;
-        private Thread _dueThread;
+        private Timer _dueThread;
+        private int isRunning = 0;
 
         static CacheListener()
         {
@@ -131,19 +133,22 @@ namespace ZyGames.Framework.Common.Timing
         /// <summary>
         /// 
         /// </summary>
+        public bool IsRunning { get { return isRunning == 1; } }
+
+        /// <summary>
+        /// 
+        /// </summary>
         public void Start()
         {
-            _dueThread = new Thread(new ParameterizedThreadStart(OnDueFirstRun));
-            _dueThread.Start();
-
+            _dueThread = new Timer(OnDueFirstRun, null, DueTime, Timeout.Infinite);
+            Interlocked.Exchange(ref isRunning, 1);
         }
 
         private void OnDueFirstRun(object obj)
         {
-            Thread.Sleep(DueTime);
-
             try
             {
+                //First run
                 if (_listenerHandle != null)
                 {
                     try
@@ -156,22 +161,7 @@ namespace ZyGames.Framework.Common.Timing
                     }
                 }
 
-                if (_cacheListener[_cacheKey] != null)
-                {
-                    return;
-                }
-
-                CacheItemPolicy policy = new CacheItemPolicy();
-                policy.AbsoluteExpiration = _expireTime == 0 ? DateTime.MaxValue : DateTime.Now.AddSeconds(_expireTime);
-                policy.RemovedCallback += new CacheEntryRemovedCallback(OnCacheEntryRemoved);
-                if (!string.IsNullOrEmpty(_dependency) && File.Exists(_dependency))
-                {
-                    List<string> paths = new List<string>();
-                    paths.Add(_dependency);
-                    policy.ChangeMonitors.Add(new HostFileChangeMonitor(paths));
-                }
-                _cacheListener.Set(_cacheKey, true, policy);
-
+                CreateCacheItem();
             }
             catch (Exception ex)
             {
@@ -181,12 +171,31 @@ namespace ZyGames.Framework.Common.Timing
             {
                 try
                 {
-                    _dueThread.Abort();
+                    _dueThread.Dispose();
                 }
                 catch (Exception)
                 {
                 }
             }
+        }
+
+        private void CreateCacheItem()
+        {
+            if (_cacheListener[_cacheKey] != null)
+            {
+                return;
+            }
+
+            CacheItemPolicy policy = new CacheItemPolicy();
+            policy.AbsoluteExpiration = _expireTime == 0 ? DateTime.MaxValue : DateTime.Now.AddSeconds(_expireTime);
+            policy.RemovedCallback += new CacheEntryRemovedCallback(OnCacheEntryRemoved);
+            if (!string.IsNullOrEmpty(_dependency) && File.Exists(_dependency))
+            {
+                List<string> paths = new List<string>();
+                paths.Add(_dependency);
+                policy.ChangeMonitors.Add(new HostFileChangeMonitor(paths));
+            }
+            _cacheListener.Set(_cacheKey, true, policy);
         }
 
         private void OnCacheEntryRemoved(CacheEntryRemovedArguments arg)
@@ -210,7 +219,11 @@ namespace ZyGames.Framework.Common.Timing
                 default:
                     break;
             }
-            this._callback.BeginInvoke(key, arg.CacheItem.Value, reason, null, null);
+            this._callback.BeginInvoke(key, arg.CacheItem.Value, reason, EndCallback, null);
+        }
+
+        private void EndCallback(IAsyncResult ar)
+        {
         }
 
         private void OnRemoveCallback(string key, object value, CacheRemovedReason reason)
@@ -225,7 +238,7 @@ namespace ZyGames.Framework.Common.Timing
                     }
                     if (value != null && value.ToBool())
                     {
-                        Start();
+                        CreateCacheItem();
                     }
                     else
                     {
@@ -244,6 +257,7 @@ namespace ZyGames.Framework.Common.Timing
         /// </summary>
         public void Stop()
         {
+            Interlocked.Exchange(ref isRunning, 0);
             if (_cacheListener[_cacheKey] != null)
                 return;
             _cacheListener[_cacheKey] = false;

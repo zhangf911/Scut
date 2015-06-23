@@ -24,7 +24,6 @@ THE SOFTWARE.
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -64,6 +63,11 @@ namespace ZyGames.Framework.RPC.IO
             _offset = 0;
             _length = _buffer.Length;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public byte[] Data { get { return _buffer; } }
         /// <summary>
         /// 
         /// </summary>

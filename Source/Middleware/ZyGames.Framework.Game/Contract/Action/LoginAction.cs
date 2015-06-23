@@ -22,15 +22,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using ZyGames.Framework.Common;
+using ZyGames.Framework.Common.Log;
+using ZyGames.Framework.Common.Security;
 using ZyGames.Framework.Game.Context;
 using ZyGames.Framework.Game.Lang;
 using ZyGames.Framework.Game.Runtime;
 using ZyGames.Framework.Game.Service;
 using ZyGames.Framework.Game.Sns;
+using ZyGames.Framework.Game.Sns.Service;
 
 namespace ZyGames.Framework.Game.Contract.Action
 {
@@ -109,7 +109,7 @@ namespace ZyGames.Framework.Game.Contract.Action
         /// </summary>
         /// <param name="actionId">Action identifier.</param>
         /// <param name="httpGet">Http get.</param>
-        protected LoginAction(short actionId, HttpGet httpGet)
+        protected LoginAction(short actionId, ActionGetter httpGet)
             : base(actionId, httpGet)
         {
             LoginProxy = new LoginProxy(httpGet);
@@ -119,8 +119,8 @@ namespace ZyGames.Framework.Game.Contract.Action
         /// </summary>
         public override void BuildPacket()
         {
-            PushIntoStack(Sid);
-            PushIntoStack(Uid);
+            PushIntoStack(Current.SessionId);
+            PushIntoStack(Current.UserId.ToNotNullString());
             PushIntoStack(UserType);
             PushIntoStack(MathUtils.Now.ToString("yyyy-MM-dd HH:mm"));
             PushIntoStack(GuideId);
@@ -163,48 +163,68 @@ namespace ZyGames.Framework.Game.Contract.Action
             }
             return true;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        protected virtual ILogin CreateLogin()
+        {
+            return LoginProxy.GetLogin();
+        }
         /// <summary>
         /// 子类实现Action处理
         /// </summary>
         /// <returns></returns>
         public override bool TakeAction()
         {
-            ILogin login = LoginProxy.GetLogin();
-            if (login != null && login.CheckLogin())
+            ILogin login = CreateLogin();
+            login.Password = DecodePassword(login.Password);
+            try
             {
-                Uid = login.UserID;
-                Sid = Current.SessionId;
-                UserId = Uid.ToInt();
-                PassportId = login.PassportID;
-                var session = GameSession.Get(Sid);
-                if (session != null)
+                Sid = string.Empty;
+                if (login.CheckLogin())
                 {
-                    session.BindIdentity(UserId);
-                }
-                UserType = SnsManager.GetUserType(PassportId);
-                SetParameter(login);
-                if (!GetError() && DoSuccess(UserId))
-                {
-                    if (UserFactory != null)
+                    Sid = Current.SessionId;
+                    PassportId = login.PassportID;
+                    UserType = login.UserType;
+                    SetParameter(login);
+                    int userId = login.UserID.ToInt();
+                    IUser user;
+                    if (!GetError() && DoSuccess(userId, out user))
                     {
-                        var user = UserFactory(UserId);
-                        if (user != null)
+                        var session = GameSession.Get(Sid);
+                        if (session != null)
                         {
-                            Current.User = user;
+                            //user is null in create role.
+                            session.Bind(user ?? new SessionUser() { PassportId = PassportId, UserId = userId });
+                            return true;
                         }
                     }
-                    return true;
+                }
+                else
+                {
+                    DoLoginFail(login);
                 }
             }
-            else
+            catch (HandlerException error)
             {
-                Uid = string.Empty;
-                Sid = string.Empty;
-                ErrorCode = Language.Instance.ErrorCode;
-                ErrorInfo = Language.Instance.PasswordError;
+                ErrorCode = (int)error.StateCode;
+                ErrorInfo = error.Message;
             }
             return false;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        protected virtual void DoLoginFail(ILogin login)
+        {
+            ErrorCode = Language.Instance.ErrorCode;
+            ErrorInfo = Language.Instance.PasswordError;
+        }
+
+
         /// <summary>
         /// Sets the parameter.
         /// </summary>
@@ -221,11 +241,13 @@ namespace ZyGames.Framework.Game.Contract.Action
         {
             return true;
         }
+
         /// <summary>
         /// Dos the success.
         /// </summary>
         /// <returns><c>true</c>, if success was done, <c>false</c> otherwise.</returns>
         /// <param name="userId">User identifier.</param>
-        protected abstract bool DoSuccess(int userId);
+        /// <param name="user"></param>
+        protected abstract bool DoSuccess(int userId, out IUser user);
     }
 }

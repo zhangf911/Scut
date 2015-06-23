@@ -23,6 +23,7 @@ THE SOFTWARE.
 ****************************************************************************/
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Text.RegularExpressions;
 using ZyGames.Framework.Common.Security;
 using ZyGames.Framework.Common.Serialization;
@@ -43,6 +44,12 @@ namespace ZyGames.Framework.Common
         /// </summary>
         public static DateTime SqlMinDate = new DateTime(1753, 1, 1);
 
+        private const long UnixEpoch = 621355968000000000L;
+        /// <summary>
+        /// Unix timestamp, val:1970-01-01 00:00:00 UTC
+        /// </summary>
+        public static readonly DateTime UnixEpochDateTime = new DateTime(UnixEpoch);
+
         /// <summary>
         /// 
         /// </summary>
@@ -51,6 +58,35 @@ namespace ZyGames.Framework.Common
             get { return DateTime.Now; }
         }
 
+        /// <summary>
+        /// 当天时间一年中是第几周
+        /// </summary>
+        public static int WeekOfYear
+        {
+            get { return ToWeekOfYear(Now); }
+        }
+
+        /// <summary>
+        /// 指定时间一年中是第几周
+        /// </summary>
+        /// <returns></returns>
+        public static int ToWeekOfYear(DateTime date)
+        {
+            int dayOfYear = date.DayOfYear;
+            DateTime tempDate = new DateTime(date.Year, 1, 1);
+            int tempDayOfWeek = (int)tempDate.DayOfWeek;
+            tempDayOfWeek = tempDayOfWeek == 0 ? 7 : tempDayOfWeek;
+            int index = (int)date.DayOfWeek;
+            index = index == 0 ? 7 : index;
+            DateTime retStartDay = date.AddDays(-(index - 1));
+            DateTime retEndDay = date.AddDays(6 - index);
+            int weekIndex = (int)Math.Ceiling(((double)dayOfYear + tempDayOfWeek - 1) / 7);
+            if (retStartDay.Year < retEndDay.Year)
+            {
+                weekIndex = 1;
+            }
+            return weekIndex;
+        }
         /// <summary>
         /// 获取与当前时间差异
         /// </summary>
@@ -69,6 +105,135 @@ namespace ZyGames.Framework.Common
         public static TimeSpan DiffDate(DateTime date1, DateTime date2)
         {
             return date1 - date2;
+        }
+
+        /// <summary>
+        /// char转成两个字节
+        /// </summary>
+        /// <param name="c"></param>
+        /// <returns></returns>
+        public static byte[] CharToByte(char c)
+        {
+            byte[] b = new byte[2];
+            b[0] = (byte)((c & 0xFF00) >> 8);
+            b[1] = (byte)(c & 0xFF);
+            return b[0] == 0 ? new byte[] { b[1] } : b;
+        }
+
+        /// <summary>
+        /// 使用两个字节转成char
+        /// </summary>
+        /// <param name="bytes"></param>
+        /// <param name="startIndex"></param>
+        /// <returns></returns>
+        public static char ByteToChar(byte[] bytes, int startIndex = 0)
+        {
+            if (bytes == null || bytes.Length == 0)
+            {
+                throw new ArgumentOutOfRangeException("b");
+            }
+            if (startIndex > bytes.Length - 1)
+            {
+                throw new ArgumentOutOfRangeException("startIndex");
+            }
+            return bytes.Length > 1
+                ? (char)(((bytes[startIndex] & 0xFF) << 8) | (bytes[startIndex + 1] & 0xFF))
+                : (char)(bytes[startIndex] & 0xFF);
+        }
+        /// <summary>
+        /// 合并
+        /// </summary>
+        /// <param name="args"></param>
+        /// <returns></returns>
+        public static byte[] Join(params byte[][] args)
+        {
+            Int32 length = 0;
+            foreach (byte[] tempbyte in args)
+            {
+                length += tempbyte.Length;
+            }
+            Byte[] bytes = new Byte[length];
+            Int32 tempLength = 0;
+            foreach (byte[] tempByte in args)
+            {
+                tempByte.CopyTo(bytes, tempLength);
+                tempLength += tempByte.Length;
+            }
+            return bytes;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="bytes"></param>
+        /// <param name="pattern"></param>
+        /// <returns></returns>
+        public static int IndexOf(byte[] bytes, byte[] pattern)
+        {
+            return IndexOf(bytes, 0, bytes.Length, pattern);
+        }
+
+        /// <summary>
+        /// 查找数组中包含另一数组的启始索引
+        /// </summary>
+        /// <param name="bytes"></param>
+        /// <param name="length"></param>
+        /// <param name="pattern"></param>
+        /// <param name="offset"></param>
+        /// <returns></returns>
+        public static int IndexOf(byte[] bytes, int offset, int length, byte[] pattern)
+        {
+            int index = -1;
+            int pos = offset;
+            if (length > bytes.Length)
+            {
+                length = bytes.Length;
+            }
+            while (pos < length)
+            {
+                if (bytes[pos] == pattern[0])
+                {
+                    index = pos;
+                    for (int i = 1; i < pattern.Length; i++)
+                    {
+                        if (pos + i >= length || pattern[i] != bytes[pos + i])
+                        {
+                            index = -1;
+                            break;
+                        }
+                    }
+                    if (index > -1)
+                    {
+                        break;
+                    }
+                }
+                pos++;
+            }
+            return index;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="ignoreCase"></param>
+        /// <returns></returns>
+        public static bool IsEquals(string a, string b, bool ignoreCase)
+        {
+            return ignoreCase ? string.Equals(a, b, StringComparison.CurrentCultureIgnoreCase) : string.Equals(a, b);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="ignoreCase"></param>
+        /// <returns></returns>
+        public static bool StartsWith(string a, string b, bool ignoreCase)
+        {
+            if (a == null) throw new ArgumentNullException("a");
+            return ignoreCase ? a.StartsWith(b, StringComparison.CurrentCultureIgnoreCase) : a.StartsWith(b);
         }
 
         /// <summary>
@@ -216,6 +381,76 @@ namespace ZyGames.Framework.Common
         {
             return IsMach("[A-Za-z_][A-Za-z0-9_]*", value);
         }
+
+        /// <summary>
+        /// 尝试相加,防止溢出
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="success"></param>
+        /// <returns></returns>
+        public static bool TryAdd(uint a, uint b, Action<uint> success)
+        {
+            uint r = a + b;
+            if (r >= a)
+            {
+                success(r);
+                return true;
+            }
+            return false;
+        }
+        /// <summary>
+        /// 尝试相加,防止溢出
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="success"></param>
+        /// <returns></returns>
+        public static bool TryAdd(ushort a, ushort b, Action<ushort> success)
+        {
+            if (a + b <= ushort.MaxValue)
+            {
+                var r = (ushort)(a + b);
+                success(r);
+                return true;
+            }
+            return false;
+        }
+        /// <summary>
+        /// 尝试相减,防止溢出
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="success"></param>
+        /// <returns></returns>
+        public static bool TrySub(uint a, uint b, Action<uint> success)
+        {
+            uint r = a - b;
+            if (r <= a)
+            {
+                success(r);
+                return true;
+            }
+            return false;
+        }
+        /// <summary>
+        /// 尝试相减,防止溢出
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="success"></param>
+        /// <returns></returns>
+        public static bool TrySub(ushort a, ushort b, Action<uint> success)
+        {
+            int r = a - b;
+            if (r >= 0 && r <= a)
+            {
+                success((ushort)r);
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// 
         /// </summary>
@@ -729,22 +964,6 @@ namespace ZyGames.Framework.Common
         }
 
         /// <summary>
-        /// 将对象转换成长整型值
-        /// </summary>
-        /// <param name="value"></param>
-        /// <returns></returns>
-        public static long ToLong(object value)
-        {
-            try
-            {
-                return Convert.ToInt64(value.IsNullOrDbNull() ? 0 : value);
-            }
-            catch
-            {
-                throw new ArgumentException(string.Format("\"{0}\" converted to type long fail.", value));
-            }
-        }
-        /// <summary>
         /// 向上取整
         /// </summary>
         /// <param name="value"></param>
@@ -794,6 +1013,22 @@ namespace ZyGames.Framework.Common
             }
         }
 
+        /// <summary>
+        /// 将对象转换成长整型值
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static long ToLong(object value)
+        {
+            try
+            {
+                return Convert.ToInt64(value.IsNullOrDbNull() ? 0 : value);
+            }
+            catch
+            {
+                throw new ArgumentException(string.Format("\"{0}\" converted to type long fail.", value));
+            }
+        }
         /// <summary>
         /// 将对象转换成整型值
         /// </summary>
@@ -869,6 +1104,22 @@ namespace ZyGames.Framework.Common
             }
         }
         /// <summary>
+        /// 将对象转换成单精度浮点值
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static float ToFloat(object value)
+        {
+            try
+            {
+                return Convert.ToSingle(value.IsNullOrDbNull() ? 0 : value);
+            }
+            catch
+            {
+                throw new ArgumentException(string.Format("\"{0}\" converted to type decimal fail.", value));
+            }
+        }
+        /// <summary>
         /// 将对象转换成布尔值
         /// </summary>
         /// <param name="value"></param>
@@ -906,6 +1157,55 @@ namespace ZyGames.Framework.Common
             catch
             {
                 throw new ArgumentException(string.Format("\"{0}\" converted to type byte fail.", value));
+            }
+        }
+
+        /// <summary>
+        /// 将对象转换成64位无符号
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static UInt64 ToUInt64(object value)
+        {
+            try
+            {
+                return Convert.ToUInt64(value.IsNullOrDbNull() ? 0 : value);
+            }
+            catch
+            {
+                throw new ArgumentException(string.Format("\"{0}\" converted to type UInt64 fail.", value));
+            }
+        }
+        /// <summary>
+        /// 将对象转换成32位无符号
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static UInt32 ToUInt32(object value)
+        {
+            try
+            {
+                return Convert.ToUInt32(value.IsNullOrDbNull() ? 0 : value);
+            }
+            catch
+            {
+                throw new ArgumentException(string.Format("\"{0}\" converted to type ToUInt32 fail.", value));
+            }
+        }
+        /// <summary>
+        /// 将对象转换成16位无符号
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static UInt16 ToUInt16(object value)
+        {
+            try
+            {
+                return Convert.ToUInt16(value.IsNullOrDbNull() ? 0 : value);
+            }
+            catch
+            {
+                throw new ArgumentException(string.Format("\"{0}\" converted to type ToUInt16 fail.", value));
             }
         }
         /// <summary>

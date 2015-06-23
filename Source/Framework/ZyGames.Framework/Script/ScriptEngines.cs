@@ -1,4 +1,4 @@
-/****************************************************************************
+Ôªø/****************************************************************************
 Copyright (c) 2013-2015 scutgame.com
 
 http://www.scutgame.com
@@ -27,156 +27,282 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using System.Threading;
-using IronPython.Hosting;
+using System.Threading.Tasks;
+using System.Web;
 using Microsoft.Scripting;
 using Microsoft.Scripting.Hosting;
-using ZyGames.Framework.Collection.Generic;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
-using ZyGames.Framework.Common.Security;
 using ZyGames.Framework.Common.Serialization;
 using ZyGames.Framework.Model;
 
 namespace ZyGames.Framework.Script
 {
     /// <summary>
-    /// Ω≈±æ∂‘œÛ“˝«Ê
+    /// script loaded delegate
+    /// </summary>
+    public delegate void ScriptLoaded(string type, string[] files);
+
+    /// <summary>
+    /// ËÑöÊú¨ÂØπË±°ÂºïÊìé
     /// </summary>
     public class ScriptEngines
     {
-        private static ScriptEngine _scriptEngine;
-        private static Timer _changeWatchingTimer;
-        private static bool _disablePython;
-        private static HashSet<string> _referencedAssemblies;
-        private static DictionaryExtend<string, FileWatcherInfo> _watcherDict;
-        private static DictionaryExtend<string, ScriptFileInfo> _scriptCodeCache;
-        private static Dictionary<string, Object> _pythonOptions;
+        private static ScriptRuntimeDomain _runtimeDomain;
+        private static ScriptSettupInfo _settupInfo;
+        private static List<FileSystemWatcher> _watcherList;
         private static HashSet<string> _changedFiles;
-        private static string _relativeDirName;
-        private const string ModelDirName = "Model";
+        private static Timer _changeWatchingTimer;
+        private static int _isCompiling = 0;
         /// <summary>
-        /// 
+        /// Script loaded event
         /// </summary>
-        public static readonly string CSharpDirName;
-        /// <summary>
-        /// 
-        /// </summary>
-        public static readonly string PythonDirName;
-        private static string _runtimeBinPath;
-        private static bool _scriptIsDebug;
-        private static int ScriptChangedDelay = 1000;
-        private static string ReferenceLibFile;
-        private static string ScriptMainClass;
-        private static string ScriptMainTypeName;
-        private static string _runtimePath;
+        public static event ScriptLoaded OnLoaded;
 
-        /// <summary>
-        /// Disable python script.
-        /// </summary>
-        public static bool DisablePython
+        private static void DoScriptLoaded(string type, string[] files)
         {
-            get { return _disablePython; }
+            ScriptLoaded handler = OnLoaded;
+            if (handler != null) handler(type, files);
         }
 
+        /// <summary>
+        /// Is compiling
+        /// </summary>
+        public static bool IsCompiling { get { return _isCompiling == 1; } }
         /// <summary>
         /// Is error
         /// </summary>
         public static bool IsError { get; private set; }
 
+        /// <summary>
+        /// Settup info
+        /// </summary>
+        public static ScriptSettupInfo SettupInfo
+        {
+            get { return _settupInfo; }
+        }
+
         static ScriptEngines()
         {
-            //init object.
-            _pythonOptions = new Dictionary<string, object>();
-            _watcherDict = new DictionaryExtend<string, FileWatcherInfo>();
-            _scriptCodeCache = new DictionaryExtend<string, ScriptFileInfo>();
             _changedFiles = new HashSet<string>();
+            _settupInfo = new ScriptSettupInfo();
+        }
 
-            //init runtime path.
-            _runtimePath = MathUtils.RuntimePath;
-            _runtimeBinPath = MathUtils.RuntimeBinPath;
-            if (string.IsNullOrEmpty(_runtimeBinPath))
+        /// <summary>
+        /// ÂàùÂßãÂåñ
+        /// </summary>
+        public static void Initialize()
+        {
+            try
             {
-                _runtimeBinPath = _runtimePath;
-            }
-            _relativeDirName = ConfigUtils.GetSetting("ScriptRelativePath", "");
-            _disablePython = ConfigUtils.GetSetting("Python_Disable", false);
-            _scriptIsDebug = ConfigUtils.GetSetting("Script_IsDebug", false);
-            SetPythonDebug = ConfigUtils.GetSetting("Python_IsDebug", _scriptIsDebug);
-            CSharpDirName = ConfigUtils.GetSetting("CSharpRootPath", "Script");
-            ScriptMainClass = ConfigUtils.GetSetting("ScriptMainClass", Path.Combine(CSharpDirName, "MainClass.cs"));
-            ScriptMainTypeName = ConfigUtils.GetSetting("ScriptMainTypeName", "");
-
-            //init script dir.
-            var directorys = new[] 
-            { 
-                string.Format("{0};{1}", ModelDirName, false),
-                string.Format("{0};{1};{2}", CSharpDirName, false, ModelDirName)
-            };
-            foreach (string temp in directorys)
-            {
-                var arr = temp.Split(';');
-                string dirName = arr[0];
-                bool isMemory = arr.Length > 1 ? arr[1].ToBool() : false;
-                string[] refArr = arr.Length > 2 ? arr[2].Split(',') : new string[0];
-                _watcherDict[dirName] = new FileWatcherInfo()
+                ScriptCompiler.ClearScriptRuntimeTemp();
+                ConfigManager.ConfigReloaded += OnScriptSettingReLoad;
+                var scope = InitScriptRuntimeScope();
+                if (scope != null)
                 {
-                    Path = Path.Combine(_runtimePath, _relativeDirName, dirName),
-                    Filter = "*.cs",
-                    CompileLevel = dirName == ModelDirName ? 9 : 3,
-                    IsInMemory = isMemory,
-                    ReferenceKeys = refArr
-                };
+                    InitScriptListener(scope.WatcherPaths);
+                }
             }
-            if (!_disablePython)
+            catch (Exception er)
             {
-                PythonDirName = ConfigUtils.GetSetting("PythonRootPath", "PyScript");
-                ReferenceLibFile = Path.Combine(_runtimePath, _relativeDirName, PythonDirName, ConfigUtils.GetSetting("ReferenceLibFile", "Lib/ReferenceLib.py"));
-                string path = Path.GetDirectoryName(ReferenceLibFile);
-                if (!string.IsNullOrEmpty(path) && !Directory.Exists(path))
+                IsError = true;
+                TraceLog.WriteError("Script init error:{0}.", er);
+                throw er;
+            }
+        }
+
+        private static void OnScriptSettingReLoad(object sender, ConfigReloadedEventArgs e)
+        {
+            try
+            {
+            }
+            catch (Exception)
+            {
+
+            }
+        }
+
+        private static void InitScriptListener(IEnumerable<string> paths)
+        {
+            _changeWatchingTimer = new Timer(DoWatcherChanged, null, Timeout.Infinite, Timeout.Infinite);
+            _watcherList = new List<FileSystemWatcher>();
+            foreach (var pathInfo in paths)
+            {
+                string[] args = pathInfo.Split(';');
+                string path = args[0];
+                string filter = args.Length > 0 ? args[1] : "*.*";
+                if (!Directory.Exists(path))
                 {
                     Directory.CreateDirectory(path);
                 }
-                _watcherDict[PythonDirName] = new FileWatcherInfo()
-                {
-                    IsPython = true,
-                    CompileLevel = 0,
-                    Path = Path.Combine(_runtimePath, _relativeDirName, PythonDirName),
-                    Filter = "*.py"
-                };
+                var watcher = new FileSystemWatcher(path, filter);
+                watcher.Changed += new FileSystemEventHandler(watcher_Changed);
+                watcher.Created += new FileSystemEventHandler(watcher_Changed);
+                watcher.Deleted += new FileSystemEventHandler(watcher_Changed);
+                watcher.Error += watcher_Error;
+                watcher.NotifyFilter = NotifyFilters.CreationTime | NotifyFilters.LastAccess | NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size;
+                watcher.IncludeSubdirectories = true;
+                watcher.EnableRaisingEvents = true;
+                _watcherList.Add(watcher);
             }
+        }
 
-            //init Assemblies
-            _referencedAssemblies = new HashSet<string>(new[]
+        private static void watcher_Error(object sender, ErrorEventArgs e)
+        {
+            TraceLog.WriteError("Script file has changed error:{0}", e.GetException().ToString());
+        }
+
+        private static ScriptRuntimeScope InitScriptRuntimeScope()
+        {
+            //star compile
+            Interlocked.Exchange(ref _isCompiling, 1);
+            try
             {
-                Path.Combine(_runtimeBinPath, "NLog.dll"),
-                Path.Combine(_runtimeBinPath, "Newtonsoft.Json.dll"), 
-                Path.Combine(_runtimeBinPath, "protobuf-net.dll"),
-                Path.Combine(_runtimeBinPath, "ServiceStack.Redis.dll"),
-                Path.Combine(_runtimeBinPath, "ZyGames.Framework.Common.dll"),
-                Path.Combine(_runtimeBinPath, "ZyGames.Framework.dll")
-            });
+                string runtimePath = MathUtils.RuntimePath ?? MathUtils.RuntimeBinPath;
+                AppDomain.CurrentDomain.AppendPrivatePath(ScriptCompiler.ScriptPath);
+                bool isFirstRun = _runtimeDomain == null;
+                if (!isFirstRun && _settupInfo.ModelChangedBefore != null)
+                {
+                    _settupInfo.ModelChangedBefore(_runtimeDomain.Scope.ModelAssembly);
+                }
+
+                _runtimeDomain = new ScriptRuntimeDomain(typeof(ScriptRuntimeDomain).Name, new[] { _settupInfo.RuntimePrivateBinPath, ScriptCompiler.ScriptPath });
+
+                ScriptDomainContext domainContext = _runtimeDomain.InitDomainContext();
+
+                foreach (var assemblyName in _settupInfo.ReferencedAssemblyNames)
+                {
+                    //ÊéíÈô§SystemÁöÑdll
+                    if (string.IsNullOrEmpty(assemblyName) ||
+                       !Path.IsPathRooted(assemblyName)) continue;
+                    string key = Path.GetFileNameWithoutExtension(assemblyName);
+                    domainContext.LoadAssembly(key, assemblyName);
+                }
+
+                var scope = _runtimeDomain.CreateScope(_settupInfo);
+                if (scope == null) return scope;
+                PrintCompiledMessage();
+                if (!isFirstRun && _settupInfo.ModelChangedAfter != null)
+                {
+                    _settupInfo.ModelChangedAfter(scope.ModelAssembly);
+                }
+                else if (scope.ModelAssembly != null)
+                {
+                    ProtoBufUtils.LoadProtobufType(scope.ModelAssembly);
+                    EntitySchemaSet.LoadAssembly(scope.ModelAssembly);
+                }
+                return scope;
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isCompiling, 0);
+            }
         }
 
-        /// <summary>
-        /// …Ë÷√PythonΩ≈±æ «∑Òø…µ˜ ‘
-        /// </summary>
-        public static bool SetPythonDebug
+        private static void PrintCompiledMessage(string message = "script")
         {
-            set { SetPythonOptions("Debug", value); }
+            TraceLog.WriteLine("{1} {0} compiled successfully.", message, DateTime.Now.ToString("HH:mm:ss"));
         }
 
-        /// <summary>
-        /// …Ë÷√Python‘À–– ±≤Œ ˝
-        /// </summary>
-        /// <param name="param"></param>
-        /// <param name="value"></param>
-        public static void SetPythonOptions(string param, object value)
+        private static void DoWatcherChanged(object state)
         {
-            _pythonOptions[param] = value;
+            try
+            {
+                HashSet<string> tmp = new HashSet<string>();
+                var localChangedFiles = Interlocked.Exchange<HashSet<string>>(ref _changedFiles, tmp);
+                bool hasModelFile = false;
+                //‰ª•Êñá‰ª∂Á±ªÂûãÂàÜÁªÑ
+                var changeGroup = localChangedFiles.GroupBy(t =>
+                {
+                    if (!hasModelFile && _runtimeDomain.Scope.IsModelScript(t))
+                    {
+                        hasModelFile = true;
+                    }
+                    return Path.GetExtension(t);
+                })
+                .OrderBy(t => t.Key);
+
+                bool isLoop = true;
+                foreach (var group in changeGroup)
+                {
+                    if (!isLoop)
+                    {
+                        break;
+                    }
+
+                    string ext = group.Key.ToLower();
+                    switch (ext)
+                    {
+                        case ".cs":
+                            if (hasModelFile)
+                            {
+                                TraceLog.WriteLine("{1} {0} compile start...", "model script", DateTime.Now.ToString("HH:mm:ss"));
+                                InitScriptRuntimeScope();
+                                PrintCompiledMessage("model script");
+                                //init script main
+                                _runtimeDomain.MainInstance = Execute(_settupInfo.ScriptMainProgram, _settupInfo.ScriptMainTypeName);
+                                if (_runtimeDomain.MainInstance != null)
+                                {
+                                    _runtimeDomain.MainInstance.ReStart();
+                                }
+                                isLoop = false;
+                            }
+                            else
+                            {
+                                //star compile
+                                Interlocked.Exchange(ref _isCompiling, 1);
+                                try
+                                {
+                                    TraceLog.WriteLine("{1} {0} compile start...", "csharp script", DateTime.Now.ToString("HH:mm:ss"));
+                                    _runtimeDomain.Scope.InitCsharp();
+                                }
+                                finally
+                                {
+                                    Interlocked.Exchange(ref _isCompiling, 0);
+                                }
+                                PrintCompiledMessage("csharp script");
+                            }
+                            break;
+                        case ".py":
+                            _runtimeDomain.Scope.InitPython(group.ToArray());
+                            PrintCompiledMessage("python script");
+                            break;
+                        case ".lua":
+                            _runtimeDomain.Scope.InitLua();
+                            PrintCompiledMessage("lua script");
+                            break;
+                        default:
+                            throw new NotSupportedException(string.Format("Script type \"{0}\" not supported.", ext));
+                    }
+                    DoScriptLoaded(ext, group.ToArray());
+                }
+
+            }
+            catch (Exception ex)
+            {
+                TraceLog.WriteError("DoWatcherChanged error:{0}", ex);
+            }
         }
+
+        private static void watcher_Changed(object sender, FileSystemEventArgs e)
+        {
+            try
+            {
+                if (!IsCompiling && !string.Equals(e.FullPath, _settupInfo.PythonReferenceLibFile, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    _changedFiles.Add(e.FullPath);
+                    _changeWatchingTimer.Change(_settupInfo.ScriptChangedDelay, Timeout.Infinite);
+                }
+            }
+            catch (Exception ex)
+            {
+                TraceLog.WriteError("watcher_Changed error:{0}", ex);
+            }
+        }
+
+
 
         /// <summary>
         /// Register model script has changed before event.
@@ -184,7 +310,7 @@ namespace ZyGames.Framework.Script
         /// <param name="callback"></param>
         public static void RegisterModelChangedBefore(Action<Assembly> callback)
         {
-            _watcherDict[ModelDirName].ChangedBefore += callback;
+            _settupInfo.ModelChangedBefore += callback;
         }
 
         /// <summary>
@@ -193,7 +319,7 @@ namespace ZyGames.Framework.Script
         /// <param name="callback"></param>
         public static void RegisterModelChangedAfter(Action<Assembly> callback)
         {
-            _watcherDict[ModelDirName].ChangedAfter += callback;
+            _settupInfo.ModelChangedAfter += callback;
         }
 
         /// <summary>
@@ -204,14 +330,14 @@ namespace ZyGames.Framework.Script
         {
             foreach (var assembly in assemblys)
             {
-                if (!string.IsNullOrEmpty(assembly) && !_referencedAssemblies.Contains(assembly))
+                if (!string.IsNullOrEmpty(assembly))
                 {
-                    _referencedAssemblies.Add(assembly);
+                    _settupInfo.ReferencedAssemblyNames.Add(assembly);
                 }
             }
         }
         /// <summary>
-        /// ÃÌº”CSharpΩ≈±æ∂ØÃ¨“˝”√DLL
+        /// Ê∑ªÂä†CSharpËÑöÊú¨Âä®ÊÄÅÂºïÁî®DLL
         /// </summary>
         /// <param name="assemblys"></param>
         public static void AddReferencedAssembly(params string[] assemblys)
@@ -219,27 +345,12 @@ namespace ZyGames.Framework.Script
             foreach (var ass in assemblys)
             {
                 if (string.IsNullOrEmpty(ass)) continue;
-                var assembly = ass.Split('/', '\\').Length == 1 ? Path.Combine(_runtimeBinPath, ass) : ass;
-                if (!string.IsNullOrEmpty(assembly) && !_referencedAssemblies.Contains(assembly))
+                var assembly = ass.Split('/', '\\').Length == 1 ? Path.Combine(_settupInfo.RuntimePrivateBinPath, ass) : ass;
+                if (!string.IsNullOrEmpty(assembly))
                 {
-                    _referencedAssemblies.Add(assembly);
+                    _settupInfo.ReferencedAssemblyNames.Add(assembly);
                 }
             }
-        }
-
-        /// <summary>
-        /// Run main class.
-        /// </summary>
-        public static bool RunMainClass(out dynamic instance, params string[] args)
-        {
-            string scriptCode = GetScriptCode(ScriptMainClass);
-            instance = Execute(scriptCode, ScriptMainTypeName);
-            if (instance != null)
-            {
-                instance.Start(args);
-                return true;
-            }
-            return false;
         }
 
         /// <summary>
@@ -248,322 +359,114 @@ namespace ZyGames.Framework.Script
         /// <returns></returns>
         public static Assembly GetEntityAssembly()
         {
-            return _watcherDict.ContainsKey(ModelDirName)
-                ? _watcherDict[ModelDirName].Assembly
-                : null;
+            return _runtimeDomain.Scope != null ? _runtimeDomain.Scope.ModelAssembly : null;
         }
 
         /// <summary>
-        /// ≥ı ºªØ
+        /// 
         /// </summary>
-        public static void Initialize()
+        public static ScriptRuntimeScope RuntimeScope
         {
-            try
-            {
-                ScriptCompiler.ClearTemp();
-                AppDomain.CurrentDomain.AppendPrivatePath(ScriptCompiler.ScriptPath);
-                _changeWatchingTimer = new Timer(TickCallback, null, Timeout.Infinite, Timeout.Infinite);
-                foreach (var pair in _watcherDict)
-                {
-                    var item = pair.Value;
-                    if (!Directory.Exists(item.Path))
-                    {
-                        Directory.CreateDirectory(item.Path);
-                    }
-                    item.Watcher = new FileSystemWatcher(item.Path, item.Filter);
-                    item.Watcher.Changed += new FileSystemEventHandler(watcher_Changed);
-                    item.Watcher.Created += new FileSystemEventHandler(watcher_Changed);
-                    item.Watcher.Deleted += new FileSystemEventHandler(watcher_Changed);
-                    item.Watcher.NotifyFilter = NotifyFilters.LastWrite;
-                    item.Watcher.IncludeSubdirectories = true;
-                    item.Watcher.EnableRaisingEvents = true;
-                }
-                InitScriptRuntime();
-            }
-            catch (Exception er)
-            {
-                IsError = true;
-                throw er;
-            }
+            get { return _runtimeDomain.Scope; }
         }
 
         /// <summary>
-        /// Dispose
+        /// Run main class.
         /// </summary>
-        public static void Dispose()
+        public static bool RunMainProgram(params string[] args)
         {
-            _changeWatchingTimer.Dispose();
-            foreach (var pair in _watcherDict)
+            if (_runtimeDomain == null)
             {
-                if (pair.Value.Watcher != null)
-                {
-                    pair.Value.Watcher.Dispose();
-                }
+                return false;
             }
-        }
-
-        private static void TickCallback(object state)
-        {
-            try
+            _settupInfo.IsCancelRunning = false;
+            string scriptCode = _settupInfo.ScriptMainProgram;
+            _runtimeDomain.MainInstance = Execute(scriptCode, _settupInfo.ScriptMainTypeName);
+            if (_runtimeDomain.MainInstance != null)
             {
-                HashSet<string> tmp = new HashSet<string>();
-                var localChangedFiles = Interlocked.Exchange<HashSet<string>>(ref _changedFiles, tmp);
-                var changeDirs = new Dictionary<string, FileWatcherInfo>();
-                foreach (var fileName in localChangedFiles)
-                {
-                    var script = LoadScript(fileName);
-                    if (script != null &&
-                        script is CSharpFileInfo &&
-                        !string.IsNullOrEmpty(script.GroupName) &&
-                        _watcherDict.ContainsKey(script.GroupName))
-                    {
-                        changeDirs[script.GroupName] = _watcherDict[script.GroupName];
-                    }
-                }
-
-                var paris = changeDirs.OrderByDescending(t => t.Value.CompileLevel).ToList();
-                foreach (var changeDir in paris)
-                {
-                    string name = changeDir.Key;
-                    var srciptList = _scriptCodeCache.Where(pair => pair.Value.GroupName == name);
-                    var filenames = srciptList.Select(t => t.Value.FileName).ToArray();
-                    UpdateAssembly(name, filenames, changeDir.Value);
-                    foreach (var pair in srciptList)
-                    {
-                        pair.Value.ObjType = null;
-                    }
-                }
-                if (paris.Count > 0)
-                {
-                    InitPythonRuntime(true);
-                }
-            }
-            catch (Exception ex)
-            {
-                TraceLog.WriteError("TickCallback error:{0}", ex);
-            }
-        }
-
-        private static void watcher_Changed(object sender, FileSystemEventArgs e)
-        {
-            try
-            {
-                if (!string.Equals(e.FullPath, ReferenceLibFile, StringComparison.CurrentCultureIgnoreCase) &&
-                    CheckFileChanged(e.FullPath))
-                {
-                    _changedFiles.Add(e.FullPath);
-                    _changeWatchingTimer.Change(ScriptChangedDelay, Timeout.Infinite);
-                }
-            }
-            catch (Exception ex)
-            {
-                TraceLog.WriteError("watcher_Changed error:{0}", ex);
-            }
-        }
-
-        private static void InitScriptRuntime()
-        {
-            try
-            {
-                InitCSharpRuntime();
-                InitPythonRuntime();
-            }
-            catch (Exception ex)
-            {
-                IsError = true;
-                TraceLog.WriteError("InitScriptRuntime error:{0}", ex);
-            }
-        }
-
-        private static void InitCSharpRuntime()
-        {
-            var csharpPairs = _watcherDict.Where(pair => !pair.Value.IsPython)
-                .OrderByDescending(t => t.Value.CompileLevel).ToList();
-            foreach (var pair in csharpPairs)
-            {
-                string name = pair.Key;
-                if (Directory.Exists(pair.Value.Path))
-                {
-                    var files = Directory.GetFiles(pair.Value.Path, pair.Value.Filter, SearchOption.AllDirectories);
-                    foreach (var fileName in files)
-                    {
-                        LoadScript(fileName);
-                    }
-                    UpdateAssembly(name, files, pair.Value);
-                    TraceLog.ReleaseWrite("CSharp {0} script successfully compiled.", name);
-                }
-            }
-        }
-
-        private static void UpdateAssembly(string name, string[] filenames, FileWatcherInfo watcherInfo)
-        {
-            string assemblyName = string.Format("DynamicScripts.{0}", name);
-            var assembly = GenerateCsharpScriptAssembly(name, filenames, assemblyName, watcherInfo);
-            var obj = _watcherDict[name];
-            if (obj != null && assembly != null)
-            {
-                obj.Assembly = assembly;
-                var pairs = _watcherDict.Where(pair => !pair.Value.IsPython && pair.Value.ReferenceKeys.Contains(name)).ToList();
-                foreach (var pair in pairs)
-                {
-                    string refName = pair.Key;
-                    var files = _scriptCodeCache.Where(p => p.Value.GroupName == refName).Select(t => t.Value.FileName).ToArray();
-                    UpdateAssembly(refName, files, pair.Value);
-                }
-            }
-        }
-
-        /// <summary>
-        /// update py reference head file.
-        /// </summary>
-        private static void UpdatePythonReferenceLib()
-        {
-            if (DisablePython) return;
-
-            StringBuilder pyCode = new StringBuilder();
-            pyCode.AppendLine(@"import clr, sys");
-            pyCode.AppendLine(@"clr.AddReference('ZyGames.Framework.Common')");
-            pyCode.AppendLine(@"clr.AddReference('ZyGames.Framework')");
-            pyCode.AppendLine(@"clr.AddReference('ZyGames.Framework.Game')");
-            var assmeblyNames = _watcherDict.Where(p => !p.Value.IsPython && p.Value.Assembly != null)
-                .Select(p => p.Value.Assembly.GetName().Name);
-            foreach (var assmeblyName in assmeblyNames)
-            {
-                pyCode.AppendFormat(@"clr.AddReference('{0}')", assmeblyName);
-                pyCode.AppendLine();
-            }
-
-            string scriptCode = GetScriptCode(ReferenceLibFile);
-            ScriptFileInfo scriptInfo = _scriptCodeCache[scriptCode];
-            if (scriptInfo == null || scriptInfo.TryEnterLock())
-            {
-                try
-                {
-                    using (var sw = File.CreateText(ReferenceLibFile))
-                    {
-                        sw.Write(pyCode.ToString());
-                        sw.Flush();
-                        sw.Close();
-                    }
-                }
-                finally
-                {
-                    if (scriptInfo != null)
-                    {
-                        scriptInfo.ExitLock();
-                    }
-                }
-            }
-
-        }
-
-        private static void InitPythonRuntime(bool isUpdate = false)
-        {
-            if (DisablePython)
-            {
-                return;
-            }
-            _scriptEngine = Python.CreateEngine(_pythonOptions);
-            _scriptEngine.Runtime.LoadAssembly(typeof(string).Assembly);
-            _scriptEngine.Runtime.LoadAssembly(Assembly.GetExecutingAssembly());
-
-            var pythonPairs = _watcherDict.Where(pair => pair.Value.IsPython).ToList();
-            List<string> searchPaths = new List<string>();
-            searchPaths.Add("*");
-            //load python path
-            string path = Environment.GetEnvironmentVariable("IRONPYTHONPATH");
-            if (string.IsNullOrEmpty(path))
-            {
-                TraceLog.WriteError("The environment variables:\"IRONPYTHONPATH\" is not be setting.");
-                Console.WriteLine("# Error>>The environment variables:\"IRONPYTHONPATH\" is not be setting.");
-            }
-            if (!string.IsNullOrEmpty(path))
-            {
-                string[] items = path.Split(';');
-                searchPaths.AddRange(items.Where(p => p.Length > 0));
-            }
-            foreach (var pair in pythonPairs)
-            {
-                string pythonPath = pair.Value.Path;
-                if (Directory.Exists(pythonPath))
-                {
-                    searchPaths.Add(pythonPath);
-                    var dirList = Directory.GetDirectories(pythonPath, "*", SearchOption.AllDirectories);
-                    searchPaths.AddRange(dirList);
-                }
-            }
-            TraceLog.ReleaseWrite("The py path:{0}", string.Join(@";", searchPaths));
-            _scriptEngine.SetSearchPaths(searchPaths.ToArray());
-
-            UpdatePythonReferenceLib();
-            //load py script
-            foreach (var pair in pythonPairs)
-            {
-                string pythonPath = pair.Value.Path;
-                if (Directory.Exists(pythonPath))
-                {
-                    var files = Directory.GetFiles(pythonPath, pair.Value.Filter, SearchOption.AllDirectories);
-                    foreach (var fileName in files)
-                    {
-                        LoadScript(fileName, isUpdate);
-                    }
-                }
-            }
-        }
-
-        private static bool CheckFileChanged(string fileName)
-        {
-            string scriptCode = GetScriptCode(fileName);
-            var script = _scriptCodeCache[scriptCode];
-            if (script != null && script.TryEnterLock())
-            {
-                try
-                {
-                    string hashcode = GetFileHashCode(fileName);
-                    return !string.IsNullOrEmpty(hashcode) && script.HashCode != hashcode;
-                }
-                finally
-                {
-                    script.ExitLock();
-                }
+                ((dynamic)_runtimeDomain.MainInstance).Start(args);
+                return true;
             }
             return false;
         }
+
         /// <summary>
-        /// º”‘ÿΩ≈±æ∂‘œÛ
+        /// 
         /// </summary>
-        /// <param name="fileName"></param>
-        /// <param name="isUpdate"></param>
-        public static ScriptFileInfo LoadScript(string fileName, bool isUpdate = false)
+        public static void CancelRunMain()
         {
-            ScriptFileInfo scriptFileInfo = null;
-            string scriptCode = GetScriptCode(fileName);
-            if (!isUpdate && _scriptCodeCache.ContainsKey(scriptCode))
-            {
-                var old = _scriptCodeCache[scriptCode];
-                if (!File.Exists(fileName) ||
-                    old.HashCode == GetFileHashCode(fileName))
-                {
-                    return old;
-                }
-            }
-            scriptFileInfo = CreateScriptFile(fileName);
-            if (scriptFileInfo != null)
-            {
-                _scriptCodeCache[scriptCode] = scriptFileInfo;
-            }
-            return scriptFileInfo;
+            _settupInfo.IsCancelRunning = true;
         }
 
         /// <summary>
-        /// Get script object
+        /// 
         /// </summary>
-        /// <param name="fileName"></param>
-        /// <returns></returns>
-        public static ScriptFileInfo GetScript(string fileName)
+        public static void RunMainWait()
         {
-            string scriptCode = GetScriptCode(fileName);
-            return _scriptCodeCache[scriptCode];
+            RunMainAsync(_settupInfo).Wait();
+        }
+
+        private static async Task RunMainAsync(ScriptSettupInfo settupInfo)
+        {
+            while (!settupInfo.IsCancelRunning)
+            {
+                await Task.Delay(1000);
+            }
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public static IMainScript GetCurrentMainScript()
+        {
+            if (_runtimeDomain != null)
+            {
+                return _runtimeDomain.MainInstance;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Request of main class.
+        /// </summary>
+        public static void RequestMainProgram(HttpContext context)
+        {
+            if (_runtimeDomain != null && _runtimeDomain.MainInstance != null)
+            {
+                ((dynamic)_runtimeDomain.MainInstance).Request(context);
+            }
+        }
+
+        /// <summary>
+        /// stop main class.
+        /// </summary>
+        public static void StopMainProgram()
+        {
+            if (_runtimeDomain != null && _runtimeDomain.MainInstance != null)
+            {
+                ((dynamic)_runtimeDomain.MainInstance).Stop();
+            }
+        }
+        /// <summary>
+        /// ÊâßË°åËÑöÊú¨
+        /// </summary>
+        /// <param name="scriptCode">ËÑöÊú¨Ê†áËØÜ</param>
+        /// <param name="typeName">csharpËÑöÊú¨ÊåáÂÆöÂØπË±°Á±ªÂûã</param>
+        /// <param name="args">csharpËÑöÊú¨ÊåáÂÆöÁ±ªÂûãÊûÑÈÄ†ÂáΩÊï∞ÁöÑÂèÇÊï∞</param>
+        /// <returns>csharpËÑöÊú¨ËøîÂõûÊåáÂÆötypeNameÂÆû‰æãÂØπË±°ÔºõpythonËÑöÊú¨ËøîÂõûScriptCodeÂØπË±°</returns>
+        public static dynamic Execute(string scriptCode, string typeName, params object[] args)
+        {
+            return _runtimeDomain.Scope.Execute(scriptCode, typeName, args);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static dynamic ExecuteCSharp<T>()
+        {
+            return _runtimeDomain.Scope.ExecuteCSharp(typeof(T).FullName);
         }
 
         /// <summary>
@@ -574,73 +477,9 @@ namespace ZyGames.Framework.Script
         /// <returns></returns>
         public static dynamic ExecuteCSharp(string typeName, params object[] args)
         {
-            string scriptCode = "";
-            typeName = typeName ?? "";
-            int index = typeName.IndexOf(CSharpDirName + ".", StringComparison.CurrentCultureIgnoreCase);
-            if (index > -1)
-            {
-                scriptCode = typeName.Substring(index) + ".cs";
-            }
-            else
-            {
-                var arr = typeName.Split(',')[0].Split('.');
-                scriptCode = arr[arr.Length - 1] + ".cs";
-            }
-            return Execute(scriptCode, typeName, args);
+            return _runtimeDomain.Scope.ExecuteCSharp(typeName, args);
         }
 
-        /// <summary>
-        /// ÷¥––Ω≈±æ
-        /// </summary>
-        /// <param name="scriptCode">Ω≈±æ±Í ∂</param>
-        /// <param name="typeName">csharpΩ≈±æ÷∏∂®∂‘œÛ¿‡–Õ</param>
-        /// <param name="args">csharpΩ≈±æ÷∏∂®¿‡–Õππ‘Ï∫Ø ˝µƒ≤Œ ˝</param>
-        /// <returns>csharpΩ≈±æ∑µªÿ÷∏∂®typeName µ¿˝∂‘œÛ£ªpythonΩ≈±æ∑µªÿScriptCode∂‘œÛ</returns>
-        public static dynamic Execute(string scriptCode, string typeName, params object[] args)
-        {
-            scriptCode = GetScriptCode(scriptCode);
-            ScriptFileInfo scriptInfo = _scriptCodeCache[scriptCode];
-            if (scriptInfo != null)
-            {
-                return Execute(scriptInfo, typeName, args);
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// ÷¥––Ω≈±æ
-        /// </summary>
-        /// <param name="scriptInfo">ScriptFileInfo∂‘œÛ</param>
-        /// <param name="typeName">csharpΩ≈±æ÷∏∂®∂‘œÛ¿‡–Õ</param>
-        /// <param name="args">csharpΩ≈±æ÷∏∂®¿‡–Õππ‘Ï∫Ø ˝µƒ≤Œ ˝</param>
-        /// <returns>csharpΩ≈±æ∑µªÿ÷∏∂®typeName µ¿˝∂‘œÛ£ªpythonΩ≈±æ∑µªÿScriptCode∂‘œÛ</returns>
-        public static dynamic Execute(ScriptFileInfo scriptInfo, string typeName, params object[] args)
-        {
-            if (scriptInfo is PythonFileInfo)
-            {
-                if (_scriptEngine == null) return null;
-                var scope = _scriptEngine.CreateScope();
-                ((PythonFileInfo)scriptInfo).CompiledCode.Execute(scope);
-                return scope;
-            }
-            if (scriptInfo is CSharpFileInfo)
-            {
-                if (scriptInfo.ObjType == null)
-                {
-                    var item = _watcherDict[scriptInfo.GroupName];
-                    if (item != null && item.Assembly != null && !item.IsUpdating())
-                    {
-                        if (string.IsNullOrEmpty(typeName))
-                        {
-                            typeName = ("Game.Script." + Path.GetFileNameWithoutExtension(scriptInfo.FileName)).Split(',')[0];
-                        }
-                        scriptInfo.ObjType = item.Assembly.GetType(typeName, false, true);
-                    }
-                }
-                return scriptInfo.ObjType != null ? scriptInfo.ObjType.CreateInstance(args) : null;
-            }
-            throw new NotSupportedException("Not supported script type:" + scriptInfo.GetType().FullName);
-        }
         /// <summary>
         /// ExecutePython
         /// </summary>
@@ -648,179 +487,97 @@ namespace ZyGames.Framework.Script
         /// <returns></returns>
         public static dynamic ExecutePython(string scriptCode)
         {
-            if (_scriptEngine == null) return null;
-            var scope = _scriptEngine.CreateScope();
-            var compileCode = CompilePythonCode(scriptCode);
-            if (scriptCode != null)
-            {
-                compileCode.Execute(scope);
-                return scope;
-            }
-            return null;
+            return _runtimeDomain.Scope.ExecutePython(scriptCode);
         }
+
+        /// <summary>
+        /// ÂêëLuaÊ≥®ÂÜåNETÁöÑÊñπÊ≥ï
+        /// </summary>
+        /// <param name="funName"></param>
+        /// <param name="obj"></param>
+        /// <param name="method"></param>
+        /// <returns></returns>
+        public static void LuaRegister(string funName, object obj, MethodBase method)
+        {
+            _runtimeDomain.Scope.LuaRegister(funName, obj, method);
+        }
+
+        /// <summary>
+        /// ÂêëLuaÊ≥®ÂÜåNETÁöÑÊñπÊ≥ï,ÊñπÊ≥ïÈúÄË¶ÅÂä†LuaMethodÂ±ûÊÄß
+        /// </summary>
+        /// <param name="args"></param>
+        public static void LuaRegisterObject(params object[] args)
+        {
+            _runtimeDomain.Scope.LuaRegisterObject(args);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="funcName"></param>
+        /// <param name="args"></param>
+        /// <returns></returns>
+        public static object ExecuteLua(string funcName, params object[] args)
+        {
+            return _runtimeDomain.Scope.ExecuteLua(funcName, args);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="luaMethod"></param>
+        /// <param name="funcName"></param>
+        /// <param name="args"></param>
+        /// <returns></returns>
+        public static object ExecuteLua(string luaMethod, string funcName, params object[] args)
+        {
+            return _runtimeDomain.Scope.ExecuteLua(luaMethod, funcName, args);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="sources"></param>
+        /// <param name="luaMethod"></param>
+        /// <param name="funcName"></param>
+        /// <param name="args"></param>
+        /// <returns></returns>
+        public static object ExecuteLuaSource(string[] sources, string luaMethod, string funcName, params object[] args)
+        {
+            return _runtimeDomain.Scope.ExecuteLuaSource(sources, luaMethod, funcName, args);
+        }
+
         /// <summary>
         /// ExecuteCSharp
         /// </summary>
-        /// <param name="scriptCode"></param>
+        /// <param name="sources"></param>
         /// <param name="refAssemblies"></param>
         /// <param name="typeName"></param>
         /// <param name="args"></param>
         /// <returns></returns>
-        public static dynamic ExecuteCSharpSource(string[] scriptCode, string[] refAssemblies, string typeName, params object[] args)
+        public static dynamic ExecuteCSharpSource(string[] sources, string[] refAssemblies, string typeName, params object[] args)
         {
-            var result = ScriptCompiler.CompileSource(scriptCode, refAssemblies, "DynamicCode", _scriptIsDebug, true);
-            if (result != null)
-            {
-                var type = result.CompiledAssembly.GetType(typeName, false, true);
-                if (type != null) return type.CreateInstance(args);
-            }
-            return null;
+            return _runtimeDomain.Scope.ExecuteCSharpSource(sources, refAssemblies, typeName, args);
         }
 
         /// <summary>
-        /// …˙≥…CSharpΩ≈±æ≥Ã–ÚºØ
+        /// 
         /// </summary>
-        private static Assembly GenerateCsharpScriptAssembly(string name, string[] fileNames, string assemblyName, FileWatcherInfo watcherInfo)
-        {
-            if (fileNames.Length > 0)
-            {
-                var refAssemblies = _referencedAssemblies.ToList();
-                foreach (var refKey in watcherInfo.ReferenceKeys)
-                {
-                    string assmPath = _watcherDict[refKey].AssemblyOutPath;
-                    if (!string.IsNullOrEmpty(assmPath))
-                    {
-                        refAssemblies.Add(assmPath);
-                    }
-                }
-                bool inMemory = watcherInfo.IsInMemory;
-                if (name == ModelDirName)
-                {
-                    string pathToAssembly;
-                    var assm = ScriptCompiler.InjectionCompile(fileNames, refAssemblies.ToArray(), assemblyName, _scriptIsDebug, inMemory, out pathToAssembly);
-                    watcherInfo.AssemblyOutPath = pathToAssembly;
-                    //load parent class propertys.
-                    if (assm != null)
-                    {
-                        ProtoBufUtils.LoadProtobufType(assm);
-                        if (watcherInfo.Assembly == null)
-                        {
-                            //first
-                            EntitySchemaSet.LoadAssembly(assm);
-                        }
-                    }
-                    return assm;
-                }
-                var result = ScriptCompiler.Compile(fileNames, refAssemblies.ToArray(), assemblyName, _scriptIsDebug, inMemory, ScriptCompiler.ScriptAssemblyTemp);
-                if (result != null)
-                {
-                    watcherInfo.AssemblyOutPath = result.PathToAssembly;
-                    return result.CompiledAssembly;
-                }
-            }
-            return null;
-        }
-
-        /// <summary>
-        /// ¥¥Ω®Ω≈±æŒƒº˛–≈œ¢∂‘œÛ
-        /// </summary>
-        /// <param name="fileName"></param>
+        /// <param name="sources"></param>
+        /// <param name="refAssemblies"></param>
+        /// <param name="codeKind"></param>
         /// <returns></returns>
-        private static ScriptFileInfo CreateScriptFile(string fileName)
+        public static ScriptScope ExecutePythonSource(string sources, string[] refAssemblies, SourceCodeKind codeKind = SourceCodeKind.Statements)
         {
-            ScriptFileInfo scriptFileInfo = null;
-            if (!File.Exists(fileName))
-            {
-                return scriptFileInfo;
-            }
-
-            var watchDir = _watcherDict.Where(pair => fileName.StartsWith(pair.Value.Path)).FirstOrDefault();
-
-            FileInfo fi = new FileInfo(fileName);
-            string fileCode = GetScriptCode(fileName);
-            string fileHash = GetFileHashCode(fileName);
-            if (fi.Extension == ".py")
-            {
-                CompiledCode compiledCode = CompilePython(fileName);
-                if (compiledCode != null)
-                {
-                    scriptFileInfo = new PythonFileInfo(fileCode, fileName, compiledCode);
-                    scriptFileInfo.HashCode = fileHash;
-                    scriptFileInfo.GroupName = watchDir.Key;
-                }
-            }
-            else if (fi.Extension == ".cs")
-            {
-                scriptFileInfo = new CSharpFileInfo(fileCode, fileName);
-                scriptFileInfo.HashCode = fileHash;
-                scriptFileInfo.GroupName = watchDir.Key;
-            }
-            else
-            {
-                TraceLog.WriteError("Not supported \"{0}\" file type.", fileName);
-            }
-            return scriptFileInfo;
+            return _runtimeDomain.Scope.ExecutePythonSource(sources, refAssemblies, codeKind);
         }
 
         /// <summary>
-        /// full filename,return relative to "Script" path
+        /// Dispose
         /// </summary>
-        /// <param name="fileName"></param>
-        /// <returns></returns>
-        private static string GetScriptCode(string fileName)
+        public static void Dispose()
         {
-            string codeString = "";
-            var arr = (fileName ?? "").Split('\\', '/', '.');
-
-            var rootArr = Path.Combine(_runtimePath, _relativeDirName).Split('\\', '/', '.');
-            bool issame = true;
-            for (int i = 0; i < arr.Length; i++)
-            {
-                string str = arr[i];
-                if (issame && rootArr.Length > i && string.Equals(str, rootArr[i], StringComparison.CurrentCultureIgnoreCase))
-                {
-                    continue;
-                }
-                issame = false;
-                if (codeString.Length > 0) codeString += ".";
-                codeString += str;
-            }
-            return (codeString ?? "default").ToLower();
+            _changeWatchingTimer.Dispose();
+            _runtimeDomain.Dispose();
         }
 
-        private static string GetFileHashCode(string fileName)
-        {
-            return CryptoHelper.ToFileMd5Hash(fileName);
-        }
-
-        private static CompiledCode CompilePython(string fileName)
-        {
-            try
-            {
-                if (_scriptEngine == null) return null;
-                var scriptSource = _scriptEngine.CreateScriptSourceFromFile(fileName);
-                return scriptSource.Compile();
-            }
-            catch (Exception ex)
-            {
-                TraceLog.WriteError("CompilePython script:{0} error:{1}", fileName, ex);
-                return null;
-            }
-        }
-
-        private static CompiledCode CompilePythonCode(string scriptCode)
-        {
-            try
-            {
-                if (_scriptEngine == null) return null;
-                var scriptSource = _scriptEngine.CreateScriptSourceFromString(scriptCode, SourceCodeKind.AutoDetect);
-                return scriptSource.Compile();
-            }
-            catch (Exception ex)
-            {
-                TraceLog.WriteError("CompilePython script:{0} error:{1}", scriptCode, ex);
-                return null;
-            }
-        }
     }
 }

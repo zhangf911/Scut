@@ -24,7 +24,6 @@ THE SOFTWARE.
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using IronPython.Modules;
 using Newtonsoft.Json;
 using ProtoBuf;
 using ZyGames.Framework.Cache.Generic;
@@ -39,12 +38,12 @@ namespace ZyGames.Framework.Model
     /// 实体数据基类
     /// </summary>
     [ProtoContract, Serializable]
-    public abstract class AbstractEntity : EntityChangeEvent, IDataExpired, IComparable<AbstractEntity>
+    public abstract class AbstractEntity : EntityChangeEvent, IDataExpired, ISqlEntity, IComparable<AbstractEntity>
     {
         /// <summary>
         /// 
         /// </summary>
-        protected const char KeyCodeJoinChar = '-';
+        internal protected const char KeyCodeJoinChar = '-';
 
         /// <summary>
         /// 
@@ -61,6 +60,29 @@ namespace ZyGames.Framework.Model
 
         private ObjectAccessor _typeAccessor;
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="keyCode"></param>
+        /// <returns></returns>
+        public static string EncodeKeyCode(string keyCode)
+        {
+            return keyCode.Replace(KeyCodeJoinChar.ToString(), "%45")
+                .Replace("_", "%46")
+                .Replace("|", "%7C");
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="keyCode"></param>
+        /// <returns></returns>
+        public static string DecodeKeyCode(string keyCode)
+        {
+            return keyCode.Replace("%45", KeyCodeJoinChar.ToString())
+                .Replace("%46", "_")
+                .Replace("%7C", "|");
+        }
 
         /// <summary>
         /// 
@@ -72,7 +94,7 @@ namespace ZyGames.Framework.Model
         /// <summary>
         /// Initializes a new instance of the <see cref="ZyGames.Framework.Model.AbstractEntity"/> class.
         /// </summary>
-        /// <param name="access">Access.</param>
+        /// <param name="access">Access. no used</param>
         protected AbstractEntity(AccessLevel access)
             : this(access == AccessLevel.ReadOnly)
         {
@@ -86,8 +108,12 @@ namespace ZyGames.Framework.Model
             : base(isReadOnly)
         {
             _isNew = true;
-            _isLoading = false;
-            _isReadOnly = isReadOnly;
+            IsInCache = false;
+            SchemaTable schema;
+            if (EntitySchemaSet.TryGet(GetType(), out schema))
+            {
+                _isReadOnly = schema.AccessLevel == AccessLevel.ReadOnly;
+            }
         }
 
         /// <summary>
@@ -99,13 +125,21 @@ namespace ZyGames.Framework.Model
         }
 
         /// <summary>
-        /// 重置状态
+        /// 
         /// </summary>
-        internal void Reset()
+        public void ResetState()
         {
             OnUnNew();
             DequeueChangePropertys();
             CompleteUpdate();
+        }
+
+        /// <summary>
+        /// 重置状态
+        /// </summary>
+        public void Reset()
+        {
+            ResetState();
             var e = new CacheItemEventArgs { ChangeType = CacheItemChangeType.UnChange };
             UnChangeNotify(this, e);
         }
@@ -124,18 +158,18 @@ namespace ZyGames.Framework.Model
         /// </summary>
         internal void SetValueBefore()
         {
-            _isLoading = true;
         }
 
         /// <summary>
         /// 设置属性值之后处理
         /// </summary>
-        internal void SetValueAfter()
+        public void SetValueAfter()
         {
             ResetChangePropertys();
-            _isLoading = false;
+            IsInCache = true;
             OnUnNew();
         }
+
         #region property
 
         /// <summary>
@@ -160,16 +194,17 @@ namespace ZyGames.Framework.Model
             }
         }
 
-        private bool _isLoading;
+
         /// <summary>
         /// 判断是否处理加载中设置属性,只读实体为False后才不可修改
         /// </summary>
         [JsonIgnore]
+        [Obsolete]
         public bool IsLoading
         {
             get
             {
-                return _isLoading;
+                return !IsInCache;
             }
         }
 
@@ -263,7 +298,27 @@ namespace ZyGames.Framework.Model
             }
         }
 
+        /// <summary>
+        /// entity modify time.
+        /// </summary>
+        [ProtoMember(100025)]
+        public DateTime TempTimeModify { get; set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        [JsonIgnore]
+        public DateTime ExpiredTime { get; set; }
+
         #endregion
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public int GetMessageQueueId()
+        {
+            return GetIdentityId();
+        }
 
         /// <summary>
         /// 标识ID，消息队列分发
@@ -277,9 +332,12 @@ namespace ZyGames.Framework.Model
         /// <param name="eventArgs"></param>
         protected override void Notify(object sender, CacheItemEventArgs eventArgs)
         {
-            eventArgs.Source = sender;
+            if (_isReadOnly || CheckChnage()) return;
+            //modify resean: not notify to ItemSet object.
+            //eventArgs.Source = sender;
             AddChangePropertys(eventArgs.PropertyName);
-            base.Notify(this, eventArgs);
+            //base.Notify(this, eventArgs);
+            PutToChangeKeys(this);
         }
 
         /// <summary>
@@ -289,12 +347,34 @@ namespace ZyGames.Framework.Model
         /// <param name="eventArgs"></param>
         protected override void NotifyByChildren(object sender, CacheItemEventArgs eventArgs)
         {
-            eventArgs.Source = sender;
+            if (_isReadOnly || CheckChnage()) return;
+            //eventArgs.Source = sender;
             AddChangePropertys(eventArgs.PropertyName);
             //更改子类事件触发者
-            base.NotifyByChildren(this, eventArgs);
+            //base.NotifyByChildren(this, eventArgs);
+            PutToChangeKeys(this);
         }
 
+        private bool CheckChnage()
+        {
+            if (!IsInCache)
+            {
+                return true;
+            }
+            if (IsExpired)
+            {
+                TraceLog.WriteError("Not found entity {0} key {1}, it is disposed.\r\n{2}", GetSchema().EntityName, GetKeyCode(), TraceLog.GetStackTrace());
+                return true;
+            }
+            return false;
+        }
+        private void PutToChangeKeys(AbstractEntity entity)
+        {
+            if (!IsModifying)
+            {
+                DataSyncQueueManager.Send(entity);
+            }
+        }
         /// <summary>
         /// 设置UnChange事件通知
         /// </summary>
@@ -409,9 +489,9 @@ namespace ZyGames.Framework.Model
             {
                 if (value.Length > 0)
                 {
-                    value += "-";
+                    value += KeyCodeJoinChar;
                 }
-                value += key.ToNotNullString();
+                value += EncodeKeyCode(key.ToNotNullString());
             }
             return value;
         }
@@ -432,11 +512,11 @@ namespace ZyGames.Framework.Model
                     {
                         value += KeyCodeJoinChar;
                     }
-                    value += GetPropertyValue(key).ToNotNullString();
+                    value += EncodeKeyCode(GetPropertyValue(key).ToNotNullString());
                 }
                 if (string.IsNullOrEmpty(value))
                 {
-                    TraceLog.WriteError("Entity {0} primary key is empty.", entitySchema.Name);
+                    TraceLog.WriteError("Entity {0} primary key is empty.", entitySchema.EntityName);
                 }
             }
 
@@ -513,6 +593,7 @@ namespace ZyGames.Framework.Model
                 {
                     val.DisableChildNotify();
                 }
+                val.IsInCache = true;
                 AddChildrenListener(val);
             }
             Notify(this, CacheItemChangeType.Modify, propertyName);
@@ -547,6 +628,7 @@ namespace ZyGames.Framework.Model
                 {
                     val.DisableChildNotify();
                 }
+                val.IsInCache = true;
                 AddChildrenListener(val);
             }
             Notify(this, CacheItemChangeType.Modify, propertyName);
@@ -555,7 +637,7 @@ namespace ZyGames.Framework.Model
         private void AddChangePropertys(string propertyName)
         {
             //在加载初始数据时，不设置Change属性
-            if (!IsLoading && !string.IsNullOrEmpty(propertyName))
+            if (!string.IsNullOrEmpty(propertyName))
             {
                 _changePropertys.Enqueue(propertyName);
             }
@@ -636,7 +718,7 @@ namespace ZyGames.Framework.Model
         {
             if (fieldValue == null)
             {
-                return new T();
+                fieldValue = new T();
             }
             if (fieldValue is T)
             {
@@ -646,6 +728,7 @@ namespace ZyGames.Framework.Model
                 {
                     temp.DisableChildNotify();
                 }
+                temp.IsInCache = true;
                 AddChildrenListener(temp);
                 return temp;
             }
@@ -681,7 +764,7 @@ namespace ZyGames.Framework.Model
                 {
                     object x = this.GetPropertyValue(key);
                     object y = other.GetPropertyValue(key);
-                    if (x is Enum || x is int || x is short || x is byte || x is bool)
+                    if (x is Enum || x is int || x is short || x is byte || x is bool || x is uint || x is ushort)
                     {
                         result = (x.ToInt()).CompareTo(y.ToInt());
                     }
@@ -699,10 +782,19 @@ namespace ZyGames.Framework.Model
                         var diff = (double)x - (double)y;
                         result = diff > 0 ? 1 : diff < 0 ? -1 : 0;
                     }
-                    else if (x is long)
+                    else if (x is long || x is ulong)
                     {
                         var diff = (long)x - (long)y;
                         result = diff > 0 ? 1 : diff < 0 ? -1 : 0;
+                    }
+                    else if (x is float)
+                    {
+                        var diff = (float)x - (float)y;
+                        result = diff > 0 ? 1 : diff < 0 ? -1 : 0;
+                    }
+                    else if (x is DateTime)
+                    {
+                        result = DateTime.Compare((DateTime)x, (DateTime)y);
                     }
                     else
                     {
@@ -745,18 +837,33 @@ namespace ZyGames.Framework.Model
                     var colAttr = schemaTable[columnName];
                     if (i < keyValues.Length && colAttr != null)
                     {
-                        object value = ParseValueType(keyValues[i], colAttr.ColumnType);
+                        string key = DecodeKeyCode(keyValues[i]);
+                        object value = ParseValueType(key, colAttr.ColumnType);
                         SetPropertyValue(columnName, value);
                     }
                 }
             }
         }
 
-        internal object ParseValueType(object value, Type columnType)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="columnType"></param>
+        /// <returns></returns>
+        public static object ParseValueType(object value, Type columnType)
         {
-            if (columnType == typeof(int))
+            if (columnType == typeof(Int64))
+            {
+                return value.ToLong();
+            }
+            if (columnType == typeof(Int32))
             {
                 return value.ToInt();
+            }
+            if (columnType == typeof(Int16))
+            {
+                return value.ToShort();
             }
             if (columnType == typeof(string))
             {
@@ -769,6 +876,10 @@ namespace ZyGames.Framework.Model
             if (columnType == typeof(double))
             {
                 return value.ToDouble();
+            }
+            if (columnType == typeof(float))
+            {
+                return value.ToFloat();
             }
             if (columnType == typeof(bool))
             {
@@ -784,11 +895,23 @@ namespace ZyGames.Framework.Model
             }
             if (columnType == typeof(Guid))
             {
-                return (Guid)value;
+                return value is Guid ? (Guid)value : Guid.Parse(value.ToString());
             }
             if (columnType.IsEnum)
             {
                 return value.ToEnum(columnType);
+            }
+            if (columnType == typeof(UInt64))
+            {
+                return value.ToUInt64();
+            }
+            if (columnType == typeof(UInt32))
+            {
+                return value.ToUInt32();
+            }
+            if (columnType == typeof(UInt16))
+            {
+                return value.ToUInt16();
             }
             return value;
         }

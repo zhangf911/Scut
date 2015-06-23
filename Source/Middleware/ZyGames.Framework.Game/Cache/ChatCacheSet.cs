@@ -21,35 +21,33 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
+
 using System;
 using System.Collections.Generic;
-using System.Web.Caching;
-using ZyGames.Framework.Cache;
 using ZyGames.Framework.Cache.Generic;
-using ZyGames.Framework.Collection;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
-using ZyGames.Framework.Common.Timing;
+using ZyGames.Framework.Game.Config;
 using ZyGames.Framework.Game.Model;
 using ZyGames.Framework.Model;
 
 namespace ZyGames.Framework.Game.Cache
 {
     /// <summary>
+    /// 
+    /// </summary>
+    public class ChatCacheSet : ChatCacheSet<ChatMessage>
+    {
+    }
+
+    /// <summary>
     /// 聊天缓存
     /// </summary>
-    public class ChatCacheSet : ShareCacheStruct<ChatMessage>
+    public class ChatCacheSet<T> : ShareCacheStruct<T> where T : ShareEntity, new()
     {
-        private const string GroupKey = "10000";
-        private readonly static int MessageMaxCount;
-        private readonly static int Timeout;
+        private const string Key = "Chat";
 
-        static ChatCacheSet()
-        {
-            MessageMaxCount = ConfigUtils.GetSetting("chatcache_maxcount", 3000);
-            Timeout = ConfigUtils.GetSetting("chatcache_timeout", 1800); //30分钟
-        }
         /// <summary>
         /// 加载数据工厂
         /// </summary>
@@ -58,30 +56,30 @@ namespace ZyGames.Framework.Game.Cache
         {
             return true;
         }
-		/// <summary>
-		/// 加载子项数据工厂
-		/// </summary>
-		/// <returns></returns>
-		/// <param name="key">Key.</param>
+        /// <summary>
+        /// 加载子项数据工厂
+        /// </summary>
+        /// <returns></returns>
+        /// <param name="key">Key.</param>
         protected override bool LoadItemFactory(string key)
         {
             return true;
         }
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="dataList"></param>
-		/// <param name="periodTime"></param>
-		/// <returns></returns>
-        protected override bool InitCache(List<ChatMessage> dataList, int periodTime)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="dataList"></param>
+        /// <param name="periodTime"></param>
+        /// <returns></returns>
+        protected override bool InitCache(List<T> dataList, int periodTime)
         {
             bool result = false;
             foreach (var data in dataList)
             {
-                result = DataContainer.TryAddQueue(GroupKey, data, periodTime, OnExpired);
+                result = DataContainer.TryAddQueue(Key, data, periodTime, OnExpired);
                 if (!result)
                 {
-                    TraceLog.WriteError("Load data:\"{0}\" tryadd key:\"{1}\" error.", DataContainer.RootKey, GroupKey);
+                    TraceLog.WriteError("Load data:\"{0}\" tryadd key:\"{1}\" error.", DataContainer.RootKey, Key);
                     return false;
                 }
             }
@@ -92,40 +90,47 @@ namespace ZyGames.Framework.Game.Cache
         /// 
         /// </summary>
         /// <param name="message"></param>
-        public void Add(ChatMessage message)
+        public void Add(T message)
         {
-            DataContainer.TryAddQueue(GroupKey, message, 0, OnExpired);
+            DataContainer.TryAddQueue(Key, message, 0, OnExpired);
         }
 
         /// <summary>
         /// 
         /// </summary>
         /// <returns></returns>
-        public ChatMessage[] GetMessage()
+        public T[] GetMessage()
         {
-            CacheQueue<ChatMessage> chatQueue;
-            if (DataContainer.TryGetQueue(GroupKey, out chatQueue))
+            CacheQueue<T> chatQueue;
+            if (DataContainer.TryGetQueue(Key, out chatQueue))
             {
                 return chatQueue.ToArray();
             }
-            return new ChatMessage[0];
+            return new T[0];
         }
 
-        private static bool OnExpired(string groupKey, CacheQueue<ChatMessage> messageQueue)
+        private static bool OnExpired(string groupKey, CacheQueue<T> cache)
         {
-            while (messageQueue != null && messageQueue.Count > 0)
+            CacheQueue<T> messageQueue;
+            if (new ChatCacheSet<T>().DataContainer.TryGetQueue(Key, out messageQueue))
             {
-                ChatMessage msg;
-                if(messageQueue.TryPeek(out msg))
+                var section = ConfigManager.Configger.GetFirstOrAddConfig<MiddlewareSection>();
+                while (messageQueue != null && messageQueue.Count > 0)
                 {
-                    if (msg != null && MathUtils.DiffDate(msg.SendDate).TotalSeconds > Timeout)
+                    T msg;
+                    if (messageQueue.TryPeek(out msg))
                     {
-                        ChatMessage temp;
-                        messageQueue.TryDequeue(out temp);
-                    }
-                    else
-                    {
-                        break;
+                        if (msg != null &&
+                            msg.ExpiredTime > DateTime.MinValue &&
+                            MathUtils.DiffDate(msg.ExpiredTime).TotalSeconds > section.ChatTimeout)
+                        {
+                            T temp;
+                            messageQueue.TryDequeue(out temp);
+                        }
+                        else
+                        {
+                            break;
+                        }
                     }
                 }
             }

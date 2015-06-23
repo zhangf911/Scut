@@ -26,6 +26,7 @@ using System.Configuration;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
+using ZyGames.Framework.Game.Config;
 using ZyGames.Framework.Game.Configuration;
 using ZyGames.Framework.Script;
 
@@ -38,12 +39,12 @@ namespace ZyGames.Framework.Game.Command
     {
         private const string SectionName = "zyGameBase-GM";
 
-        private static bool EnableGM;
+        //private static bool EnableGM;
 
-        static BaseCommand()
-        {
-            EnableGM = ConfigUtils.GetSetting("EnableGM", false);
-        }
+        //static BaseCommand()
+        //{
+        //    EnableGM = ConfigUtils.GetSetting("EnableGM", false);
+        //}
 
         /// <summary>
         /// 
@@ -52,7 +53,7 @@ namespace ZyGames.Framework.Game.Command
         /// <returns></returns>
         public static bool Check(string command)
         {
-            return command.StartsWith("gm:", StringComparison.CurrentCultureIgnoreCase);
+            return command.StartsWith("gm:", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -65,7 +66,8 @@ namespace ZyGames.Framework.Game.Command
         {
             try
             {
-                if (!EnableGM)
+                var section = ConfigManager.Configger.GetFirstOrAddConfig< MiddlewareSection>();
+                if (!section.EnableGM)
                 {
                     return;
                 }

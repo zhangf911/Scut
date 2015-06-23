@@ -23,9 +23,9 @@ THE SOFTWARE.
 ****************************************************************************/
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Web;
-using System.Web.Security;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Game.Lang;
 using ZyGames.Framework.Game.Runtime;
@@ -39,7 +39,27 @@ namespace ZyGames.Framework.Game.Contract
     /// </summary>
     public class HttpGet : ActionGetter
     {
-        private string _requestParam = string.Empty;
+        /// <summary>
+        /// 
+        /// </summary>
+        public const string ParamSid = "Sid";
+        /// <summary>
+        /// 
+        /// </summary>
+        public const string ParamMsgId = "MsgId";
+        /// <summary>
+        /// 
+        /// </summary>
+        public const string ParamActionId = "ActionId";
+        /// <summary>
+        /// 
+        /// </summary>
+        public const string ParamUid = "Uid";
+        /// <summary>
+        /// 
+        /// </summary>
+        public const string ParamSt = "St";
+        private string _originalParam = string.Empty;
         private StringBuilder _error = new StringBuilder();
         private Dictionary<string, string> _param = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase);
 
@@ -47,34 +67,68 @@ namespace ZyGames.Framework.Game.Contract
         /// 构造函数
         /// </summary>
         public HttpGet(HttpRequest request)
-            : base(null)
+            : base(null, null)
         {
             _paramString = request["d"] ?? "";
             InitData(_paramString);
             //http
-            if (_param.ContainsKey("sid"))
+            string sessionId = "";
+            if (_param.ContainsKey(ParamSid))
             {
-                SessionId = _param["sid"];
+                sessionId = _param[ParamSid];
             }
-            if (string.IsNullOrEmpty(SessionId))
+            if (string.IsNullOrEmpty(sessionId))
             {
-                SessionId = request["sid"];
+                sessionId = request[ParamSid];
             }
-            _session = GameSession.Get(SessionId)
-                ?? GameSession.CreateNew(Guid.NewGuid(), request);
+            _session = GameSession.Get(sessionId) ?? GameSession.CreateNew(Guid.NewGuid(), request);
+
+            //set cookie
+            var cookie = request.Cookies.Get(ParamSid);
+            if (cookie == null && HttpContext.Current != null)
+            {
+                cookie = new HttpCookie(ParamSid, SessionId);
+                cookie.Expires = DateTime.Now.AddMinutes(5);
+                HttpContext.Current.Response.Cookies.Add(cookie);
+            }
         }
 
         /// <summary>
         /// 
         /// </summary>
         /// <param name="package"></param>
-        public HttpGet(RequestPackage package)
-            : base(package)
+        /// <param name="session"></param>
+        public HttpGet(RequestPackage package, GameSession session)
+            : base(package, session)
         {
-            _paramString = package.UrlParam ?? "";
-            _session = package.Session;
-            InitData(_paramString);
-            SessionId = _session != null ? _session.SessionId : "";
+            _param = package.Params;
+            _paramString = package.OriginalParam ?? "";
+
+            RemoveSignKey(_paramString);
+            SetParams();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public ICollection<string> Keys
+        {
+            get { return _param.Keys; }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public IList<string> GetCustomKeys()
+        {
+            return _param.Keys.Where(k =>
+                !string.Equals(k, ParamSid, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(k, ParamMsgId, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(k, ParamActionId, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(k, ParamUid, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(k, ParamSt, StringComparison.OrdinalIgnoreCase)
+                ).ToList();
         }
 
         /// <summary>
@@ -82,7 +136,7 @@ namespace ZyGames.Framework.Game.Contract
         /// </summary>
         /// <param name="key"></param>
         /// <returns></returns>
-        public string this[string key]
+        public override string this[string key]
         {
             get { return _param[key]; }
             set { _param[key] = value; }
@@ -108,28 +162,9 @@ namespace ZyGames.Framework.Game.Contract
         /// </summary>
         public string RemoteAddress
         {
-            get { return _session != null ? _session.EndAddress : string.Empty; }
+            get { return _session != null ? _session.RemoteAddress : string.Empty; }
         }
 
-        /// <summary>
-        /// get current UserId.
-        /// </summary>
-        public int UserId { get; private set; }
-
-        /// <summary>
-        /// get current sessionid.
-        /// </summary>
-        public string SessionId { get; private set; }
-
-        private GameSession _session;
-
-        /// <summary>
-        /// Session
-        /// </summary>
-        public GameSession Session
-        {
-            get { return _session; }
-        }
 
         private string _paramString;
 
@@ -139,6 +174,15 @@ namespace ZyGames.Framework.Game.Contract
         public string ParamString
         {
             get { return _paramString; }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public override string GetSt()
+        {
+            return _param.ContainsKey(ParamSt) ? _param[ParamSt] : string.Empty;
         }
 
         /// <summary>
@@ -154,20 +198,37 @@ namespace ZyGames.Framework.Game.Contract
 
         private void InitData(string d)
         {
-            int index = d.LastIndexOf("&sign=", StringComparison.Ordinal);
-            if (index != -1)
-            {
-                _requestParam = d.Substring(0, index);
-            }
+            RemoveSignKey(d);
             var temp = HttpUtility.ParseQueryString(d);
 
             foreach (var key in temp.AllKeys)
             {
+                if (string.IsNullOrEmpty(key)) continue;
                 _param[key] = temp[key];
             }
-            MsgId = (_param.ContainsKey("MsgId") ? _param["MsgId"] : "0").ToInt();
-            _actionId = (_param.ContainsKey("actionId") ? _param["actionId"] : "0").ToInt();
-            UserId = (_param.ContainsKey("uid") ? _param["uid"] : "0").ToInt();
+            SetParams();
+        }
+
+        private void SetParams()
+        {
+            MsgId = (_param.ContainsKey(ParamMsgId) ? _param[ParamMsgId] : "0").ToInt();
+            _actionId = (_param.ContainsKey(ParamActionId) ? _param[ParamActionId] : "0").ToInt();
+        }
+
+        private void RemoveSignKey(string d)
+        {
+            int startIndex = d.IndexOf("?d=", StringComparison.OrdinalIgnoreCase);
+            if (startIndex > -1)
+            {
+                d = d.Substring(startIndex + 3);
+                d = HttpUtility.UrlDecode(d);
+            }
+
+            int index = d.LastIndexOf("&sign=", StringComparison.OrdinalIgnoreCase);
+            if (index != -1)
+            {
+                _originalParam = d.Substring(0, index);
+            }
         }
 
         private const int ZeroNum = 0;
@@ -465,6 +526,100 @@ namespace ZyGames.Framework.Game.Contract
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="aName"></param>
+        /// <param name="rValue"></param>
+        /// <returns></returns>
+        public override bool GetInt(string aName, ref uint rValue)
+        {
+            return GetInt(aName, ref rValue, ZeroNum, uint.MaxValue);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public override bool GetInt(string aName, ref uint rValue, uint minValue, uint maxValue)
+        {
+            bool result = false;
+            if (_param.ContainsKey(aName))
+            {
+                result = uint.TryParse(_param[aName], out rValue);
+                if (result)
+                {
+                    result = rValue >= minValue && rValue <= maxValue;
+                }
+                if (!result)
+                {
+                    WriteRangOutError(aName, (int)minValue, (int)maxValue);
+                }
+            }
+            else
+            {
+                WriteContainsError(aName);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public override bool GetWord(string aName, ref ushort rValue)
+        {
+            return GetWord(aName, ref rValue, ZeroNum, ushort.MaxValue);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public override bool GetWord(string aName, ref ushort rValue, ushort minValue, ushort maxValue)
+        {
+            bool result = false;
+            if (_param.ContainsKey(aName))
+            {
+                result = ushort.TryParse(_param[aName], out rValue);
+                if (result)
+                {
+                    result = rValue >= minValue && rValue <= maxValue;
+                }
+                if (!result)
+                {
+                    WriteRangOutError(aName, minValue, maxValue);
+                }
+            }
+            else
+            {
+                WriteContainsError(aName);
+            }
+            return result;
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        public override bool GetBool(string aName, ref bool rValue)
+        {
+            bool result = false;
+            if (_param.ContainsKey(aName))
+            {
+                if ("1".Equals(_param[aName]))
+                {
+                    rValue = true;
+                    result = true;
+                }
+                else
+                {
+                    result = bool.TryParse(_param[aName], out rValue);
+                }
+            }
+            else
+            {
+                WriteContainsError(aName);
+            }
+            return result;
+        }
+
+
+        /// <summary>
         /// 读取Byte类型的请求参数
         /// </summary>
         /// <param name="aName">URL参数名</param>
@@ -563,6 +718,7 @@ namespace ZyGames.Framework.Game.Contract
                 }
                 catch
                 {
+                    WriteContainsError(aName);
                     result = false;
                 }
             }
@@ -580,7 +736,7 @@ namespace ZyGames.Framework.Game.Contract
         /// <returns></returns>
         public override bool CheckSign()
         {
-            string signKey = GameEnvironment.Setting.ProductSignKey;
+            string signKey = GameEnvironment.Setting != null ? GameEnvironment.Setting.ProductSignKey : "";
             if (string.IsNullOrEmpty(signKey))
             {
                 return true;
@@ -589,14 +745,11 @@ namespace ZyGames.Framework.Game.Contract
             string sign = "";
             if (GetString("sign", ref sign))
             {
-                if (_requestParam != null)
+                string attachParam = _originalParam + signKey;
+                string key = ZyGames.Framework.Common.Security.CryptoHelper.MD5_Encrypt(attachParam, Encoding.UTF8);
+                if (!string.IsNullOrEmpty(key) && key.ToLower() == sign)
                 {
-                    string attachParam = _requestParam + signKey;
-                    string key = ZyGames.Framework.Common.Security.CryptoHelper.MD5_Encrypt(attachParam, Encoding.UTF8);
-                    if (!string.IsNullOrEmpty(key) && key.ToLower() == sign)
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
 
@@ -629,14 +782,11 @@ namespace ZyGames.Framework.Game.Contract
         {
             return MsgId;
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        public override string GetSt()
-        {
-            return GetStringValue("St");
-        }
+
+        //public override string GetSt()
+        //{
+        //    return GetStringValue(ParamSt);
+        //}
 
         /// <summary>
         /// 
@@ -653,26 +803,9 @@ namespace ZyGames.Framework.Game.Contract
         /// <returns></returns>
         public override int GetUserId()
         {
-            return UserId;
+            return Session != null ? Session.UserId : 0;
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        public override string GetSessionId()
-        {
-            return SessionId;
-        }
-
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
-        public override GameSession GetSession()
-        {
-            return _session;
-        }
         /// <summary>
         /// 
         /// </summary>

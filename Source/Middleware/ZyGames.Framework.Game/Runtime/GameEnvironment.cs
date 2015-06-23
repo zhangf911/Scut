@@ -22,9 +22,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
+using System.Configuration;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using ZyGames.Framework.Cache.Generic;
+using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
 using ZyGames.Framework.Common.Reflect;
@@ -35,7 +38,6 @@ using ZyGames.Framework.Game.Configuration;
 using ZyGames.Framework.Game.Contract;
 using ZyGames.Framework.Game.Lang;
 using ZyGames.Framework.Game.Message;
-using ZyGames.Framework.Game.Pay;
 using ZyGames.Framework.Model;
 using ZyGames.Framework.Redis;
 using ZyGames.Framework.Script;
@@ -52,6 +54,23 @@ namespace ZyGames.Framework.Game.Runtime
     /// </summary>
     public static class GameEnvironment
     {
+        static GameEnvironment()
+        {
+            ConfigManager.ConfigReloaded += OnConfigReloaded;
+        }
+
+        private static void OnConfigReloaded(object sender, ConfigReloadedEventArgs e)
+        {
+            try
+            {
+                _setting.Reset();
+            }
+            catch (Exception ex)
+            {
+                TraceLog.WriteError("GameEnvironment reload error:{0}", ex);
+            }
+        }
+
         /// <summary>
         /// The python script task cache key.
         /// </summary>
@@ -59,7 +78,7 @@ namespace ZyGames.Framework.Game.Runtime
 
         private static int _isRunning;
 
-        private static EnvironmentSetting _setting;
+        private static EnvironmentSetting _setting = new EnvironmentSetting();
         ///<summary>
         /// The environment configuration information.
         ///</summary>
@@ -94,20 +113,42 @@ namespace ZyGames.Framework.Game.Runtime
         /// </summary>
         public static int ProductServerId { get { return _setting != null ? _setting.ProductServerId : 0; } }
 
+
+        private static readonly CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+
+        /// <summary>
+        /// is close server
+        /// </summary>
+        public static bool IsCanceled
+        {
+            get
+            {
+                return cancellationTokenSource.Token.IsCancellationRequested;
+            }
+            set
+            {
+                if (value)
+                {
+                    cancellationTokenSource.Cancel();
+                }
+            }
+        }
+
         /// <summary>
         /// 
         /// </summary>
         public static bool IsRunning
         {
             get { return _isRunning == 1; }
+            set { Interlocked.Exchange(ref _isRunning, value ? 1 : 0); }
         }
 
         /// <summary>
         /// Initialize entity cache.
         /// </summary>
-        public static void InitializeCache()
+        public static void InitializeCache(ICacheSerializer serializer)
         {
-            CacheFactory.Initialize(new CacheSetting());
+            CacheFactory.Initialize(new CacheSetting(), serializer);
         }
 
         /// <summary>
@@ -128,14 +169,22 @@ namespace ZyGames.Framework.Game.Runtime
         /// <param name="cacheSetting">Cache setting.</param>
         public static void Start(EnvironmentSetting setting, CacheSetting cacheSetting)
         {
-            if (_isRunning == 1) return;
+            if (IsRunning) return;
 
+            TraceLog.WriteLine("{0} Server is starting...", DateTime.Now.ToString("HH:mm:ss"));
             _setting = setting;
-            RedisConnectionPool.Initialize();
+            if (!RedisConnectionPool.Ping("127.0.0.1"))
+            {
+                string error = string.Format("Error: NIC is not connected or no network.");
+                TraceLog.WriteLine(error);
+                TraceLog.WriteError(error);
+                return;
+            }
+            RedisConnectionPool.Initialize(_setting.Serializer);
             if (!RedisConnectionPool.CheckConnect())
             {
                 string error = string.Format("Error: the redis server is not started.");
-                Console.WriteLine(error);
+                TraceLog.WriteLine(error);
                 TraceLog.WriteError(error);
                 return;
             }
@@ -147,7 +196,7 @@ namespace ZyGames.Framework.Game.Runtime
                 ProtoBufUtils.LoadProtobufType(_setting.EntityAssembly);
                 EntitySchemaSet.LoadAssembly(_setting.EntityAssembly);
             }
-            EntitySchemaSet.StartCheckTableTimer();
+
             ZyGameBaseConfigManager.Intialize();
             //init script.
             if (_setting.ScriptSysAsmReferences.Length > 0)
@@ -161,35 +210,50 @@ namespace ZyGames.Framework.Game.Runtime
             }
             ScriptEngines.RegisterModelChangedBefore(OnModelChangeBefore);
             ScriptEngines.RegisterModelChangedAfter(OnModelChangeAtfer);
+            ScriptEngines.OnLoaded += OnScriptLoaded;
             ScriptEngines.Initialize();
             Language.SetLang();
-            CacheFactory.Initialize(cacheSetting);
+            CacheFactory.Initialize(cacheSetting, _setting.Serializer);
+            EntitySchemaSet.StartCheckTableTimer();
             Global = new ContextCacheSet<CacheItem>("__gameenvironment_global");
-            Interlocked.Exchange(ref _isRunning, 1);
         }
 
+        private static void OnScriptLoaded(string type, string[] files)
+        {
+            if (".cs".Equals(type))
+            {
+                Language.Reset();
+            }
+        }
+
+
+        private const int CheckTimeout = 60000;
         private static void OnModelChangeBefore(Assembly assembly)
         {
             try
             {
-                Interlocked.Exchange(ref _isRunning, 0);
+                IsRunning = false;
                 TraceLog.ReleaseWrite("Wait for the update before Model script...");
                 CacheFactory.UpdateNotify(true);
                 var task = System.Threading.Tasks.Task.Factory.StartNew(() =>
                 {
+                    int time = CheckTimeout / 100;
                     try
                     {
-                        while (!CacheFactory.CheckCompleted())
+                        while (time > 0 && !CacheFactory.CheckCompleted())
                         {
                             Thread.Sleep(100);
+                            time--;
                         }
                     }
                     catch (Exception)
                     {
                     }
                 });
-                System.Threading.Tasks.Task.WaitAll(task);
-                TraceLog.ReleaseWrite("Update before Model script OK.");
+                if (System.Threading.Tasks.Task.WaitAll(new[] { task }, CheckTimeout))
+                {
+                    TraceLog.ReleaseWrite("Update before Model script OK.");
+                }
             }
             catch (Exception ex)
             {
@@ -211,7 +275,7 @@ namespace ZyGames.Framework.Game.Runtime
                 CacheFactory.ResetCache();
                 SensitiveWordService.Init();
                 TraceLog.ReleaseWrite("Update Model script success.");
-                Interlocked.Exchange(ref _isRunning, 1);
+                IsRunning = true;
             }
             catch (Exception ex)
             {
@@ -235,9 +299,20 @@ namespace ZyGames.Framework.Game.Runtime
         /// </summary>
         public static void Stop()
         {
+            IsRunning = false;
             CacheFactory.UpdateNotify(true);
-            CacheFactory.Dispose();
-            Interlocked.Exchange(ref _isRunning, 0);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task WaitStop()
+        {
+            while (!DataSyncQueueManager.IsRunCompleted)
+            {
+                await System.Threading.Tasks.Task.Delay(1000);
+            }
         }
 
     }

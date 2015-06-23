@@ -25,6 +25,7 @@ using System;
 using System.Collections.Concurrent;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Data.MySql;
+using ZyGames.Framework.Data.Sql;
 
 namespace ZyGames.Framework.Data
 {
@@ -56,13 +57,17 @@ namespace ZyGames.Framework.Data
         /// <summary>
         /// 本机的MySql数据服务
         /// </summary>
-        LocalMysql,
+        LocalMySql,
     }
     /// <summary>
     /// 数据提供者类型
     /// </summary>
     public enum DbProviderType
     {
+        /// <summary>
+        /// 
+        /// </summary>
+        Unkown = 0,
         /// <summary>
         /// 
         /// </summary>
@@ -100,6 +105,14 @@ namespace ZyGames.Framework.Data
         }
 
         /// <summary>
+        /// clear setting
+        /// </summary>
+        public static void ClearSetting()
+        {
+            _settings.Clear();
+        }
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="ConnectionSetting"/> class.
         /// </summary>
         /// <param name="providerName"></param>
@@ -109,8 +122,12 @@ namespace ZyGames.Framework.Data
         {
             ProviderName = providerName;
             ProviderTypeName = providerTypeName;
-            ProviderType = DbProviderType.MsSql;
-            if (typeof(MySqlDataProvider).Name.Equals(ProviderTypeName, StringComparison.CurrentCultureIgnoreCase))
+            ProviderType = DbProviderType.Unkown;
+            if (typeof(SqlDataProvider).Name.Equals(ProviderTypeName, StringComparison.CurrentCultureIgnoreCase))
+            {
+                ProviderType = DbProviderType.MsSql;
+            }
+            else if (typeof(MySqlDataProvider).Name.Equals(ProviderTypeName, StringComparison.CurrentCultureIgnoreCase))
             {
                 ProviderType = DbProviderType.MySql;
             }
@@ -169,7 +186,7 @@ namespace ZyGames.Framework.Data
             else if ("LocalMySqlServer".Equals(ProviderName, StringComparison.CurrentCultureIgnoreCase))
             {
                 ProviderTypeName = "MySqlDataProvider";
-                DbLevel = DbLevel.LocalMysql;
+                DbLevel = DbLevel.LocalMySql;
             }
 
             if (ProviderType == DbProviderType.MySql)

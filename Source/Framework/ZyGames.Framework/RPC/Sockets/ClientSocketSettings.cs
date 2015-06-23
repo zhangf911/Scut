@@ -21,10 +21,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
-using System;
+
 using System.Collections.Generic;
 using System.Net;
-using System.Text;
 
 namespace ZyGames.Framework.RPC.Sockets
 {
@@ -53,5 +52,38 @@ namespace ZyGames.Framework.RPC.Sockets
         /// </summary>
         /// <value>The remote end point.</value>
 		public IPEndPoint RemoteEndPoint { get; private set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public string Scheme { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+	    public string UrlPath { get; set; }
+
+	    /// <summary>
+        /// 
+        /// </summary>
+        public string Origin { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        public string Extensions { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        public string Protocol { get; set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+	    public string SecWebSocketExtensions { get; set; }
+
+	    /// <summary>
+        /// Client cookies.
+        /// </summary>
+        public Dictionary<string, string> Cookies { get; set; }
+
     }
 }

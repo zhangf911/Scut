@@ -1,6 +1,6 @@
 /*
-≤Œ ˝:
-$dbpath  ˝æ›ø‚¥Ê¥¢¬∑æ∂
+ÂèÇÊï∞:
+$dbpath Êï∞ÊçÆÂ∫ìÂ≠òÂÇ®Ë∑ØÂæÑ
 */
 
 /*=========================================================================================*/
@@ -27,7 +27,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 CREATE TABLE [Solutions](
-	[SlnID] [int] IDENTITY(1,1) NOT NULL,
+	[SlnID] [int] IDENTITY(100,1) NOT NULL,
 	[SlnName] [varchar](100) NOT NULL,
 	[Namespace] [varchar](200) NULL,
 	[RefNamespace] [varchar](200) NULL,
@@ -45,7 +45,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 CREATE TABLE [ParamInfo](
-	[ID] [int] IDENTITY(1,1) NOT NULL,
+	[ID] [int] IDENTITY(17000,1) NOT NULL,
 	[ContractID] [int] NOT NULL,
 	[ParamType] [smallint] NOT NULL,
 	[Field] [varchar](30) NOT NULL,
@@ -74,7 +74,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 CREATE TABLE [enuminfo](
-	[id] [int] IDENTITY(1,1) NOT NULL,
+	[id] [int] IDENTITY(1000,1) NOT NULL,
 	[SlnID] [int] NOT NULL,
 	[enumName] [nvarchar](50) NOT NULL,
 	[enumDescription] [nvarchar](200) NULL,
@@ -91,7 +91,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 CREATE TABLE [AgreementClass](
-	[AgreementID] [int] IDENTITY(1,1) NOT NULL,
+	[AgreementID] [int] IDENTITY(100,1) NOT NULL,
 	[GameID] [int] NULL,
 	[Title] [varchar](200) NULL,
 	[Describe] [varchar](max) NULL,
@@ -121,3 +121,24 @@ CREATE TABLE [Contract](
 )WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
 ) ON [PRIMARY]
 
+go
+create table ContractVersion
+(
+	ID	int identity(1,1),
+	Title	varchar(100),
+	SlnID	int not null,
+	primary key(id)
+)
+
+go
+
+alter table [Contract] add [VerId] int not null default(0);
+alter table [ParamInfo] add [VerId] int not null default(0);
+go
+
+
+alter table [Solutions] add [SerUseScript] varchar(20);
+alter table [Solutions] add [CliUseScript] varchar(20);
+alter table [Solutions] add [IsDParam] bit not null default(1);
+alter table [Solutions] add [RespContentType] int not null default(0);
+go

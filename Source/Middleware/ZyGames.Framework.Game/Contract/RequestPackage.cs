@@ -22,10 +22,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
-using System.Security.Cryptography.X509Certificates;
+using System.Collections.Generic;
 using Newtonsoft.Json;
 using ProtoBuf;
-using ZyGames.Framework.Common.Serialization;
 
 namespace ZyGames.Framework.Game.Contract
 {
@@ -54,6 +53,11 @@ namespace ZyGames.Framework.Game.Contract
             UserId = userId;
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        public Dictionary<string, string> Params { get; set; }
+        
         /// <summary>
         /// message id of client request
         /// </summary>
@@ -100,26 +104,66 @@ namespace ZyGames.Framework.Game.Contract
         [ProtoMember(8)]
         public bool IsUrlParam { get; internal protected set; }
 
-        /// <summary>
-        /// param for url request
-        /// </summary>
-        [ProtoMember(9)]
-        public string UrlParam { get; set; }
+        //注释原因：重复解析参数字串
+        ///// <summary>
+        ///// param for url request
+        ///// </summary>
+        //[ProtoMember(9)]
+        //public string UrlParam { get; set; }
 
+        /// <summary>
+        /// 远程代理客户端的标识ID
+        /// </summary>
+        [ProtoMember(10)]
+        public string ProxyId { get; set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        [ProtoMember(11)]
+        public sbyte OpCode { get; set; }
+
+        /// <summary>
+        /// sigin use
+        /// </summary>
+        public string OriginalParam { get; set; }
+
+        /// <summary>
+        /// websocket use
+        /// </summary>
+        public string CommandMessage { get; set; }
 
         /// <summary>
         /// Message of custom
         /// </summary>
         public object Message { get; set; }
 
-        /// <summary>
-        /// GameSession
-        /// </summary>
-        [JsonIgnore]
-        public GameSession Session { get; internal protected set; }
+        ///// <summary>
+        ///// GameSession
+        ///// </summary>
+        //[JsonIgnore]
+        //public GameSession Session { get; protected set; }
+
         /// <summary>
         /// Receive time
         /// </summary>
-        public DateTime ReceiveTime { get; internal protected set; }
+        public DateTime ReceiveTime { get; protected set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="session"></param>
+        public void Bind(GameSession session)
+        {
+            if (session != null)
+            {
+                SessionId = session.SessionId;
+                session.ProxyId = ProxyId;
+                //push not refresh
+                if (MsgId > 0) session.Refresh();
+            }
+            //Session = session;
+            ReceiveTime = DateTime.Now;
+        }
     }
 }

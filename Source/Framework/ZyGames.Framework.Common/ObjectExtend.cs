@@ -57,6 +57,29 @@ namespace ZyGames.Framework.Common
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="ignoreCase"></param>
+        /// <returns></returns>
+        public static bool IsEquals(this string a, string b, bool ignoreCase)
+        {
+            return MathUtils.IsEquals(a, b, ignoreCase);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="ignoreCase"></param>
+        /// <returns></returns>
+        public static bool StartsWith(this string a, string b, bool ignoreCase)
+        {
+            return MathUtils.StartsWith(a, b, ignoreCase);
+        }
+        /// <summary>
         /// 同string.IsNullOrEmpty
         /// </summary>
         /// <param name="value"></param>
@@ -166,6 +189,53 @@ namespace ZyGames.Framework.Common
             return JsonUtils.SerializeCustom(list);
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="bytes"></param>
+        /// <param name="pattern"></param>
+        /// <returns></returns>
+        public static int IndexOf(this byte[] bytes, byte[] pattern)
+        {
+            return MathUtils.IndexOf(bytes, pattern);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="bytes"></param>
+        /// <param name="offset"></param>
+        /// <param name="length"></param>
+        /// <param name="pattern"></param>
+        /// <returns></returns>
+        public static int IndexOf(this byte[] bytes, int offset, int length, byte[] pattern)
+        {
+            return MathUtils.IndexOf(bytes, offset, length, pattern);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="array"></param>
+        /// <returns></returns>
+        public static T[] RandomSort<T>(this T[] array)
+        {
+            return RandomUtils.RandomSort(array);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="list"></param>
+        /// <returns></returns>
+        public static List<T> RandomSort<T>(this List<T> list)
+        {
+            return RandomUtils.RandomSort(list);
+        }
+
+
         #region 转换值
 
         /// <summary>
@@ -254,6 +324,17 @@ namespace ZyGames.Framework.Common
         {
             return MathUtils.ToDecimal(value);
         }
+
+        /// <summary>
+        /// 将对象转换成单精度浮点值
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static float ToFloat(this object value)
+        {
+            return MathUtils.ToFloat(value);
+        }
+
         /// <summary>
         /// 将对象转换成布尔值
         /// </summary>
@@ -271,6 +352,33 @@ namespace ZyGames.Framework.Common
         public static byte ToByte(this object value)
         {
             return MathUtils.ToByte(value);
+        }
+        /// <summary>
+        /// 将对象转换成64位无符号
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static UInt64 ToUInt64(this object value)
+        {
+            return MathUtils.ToUInt64(value);
+        }
+        /// <summary>
+        /// 将对象转换成32位无符号
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static UInt32 ToUInt32(this object value)
+        {
+            return MathUtils.ToUInt32(value);
+        }
+        /// <summary>
+        /// 将对象转换成16位无符号
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public static UInt16 ToUInt16(this object value)
+        {
+            return MathUtils.ToUInt16(value);
         }
         /// <summary>
         /// 将对象转换成时间值

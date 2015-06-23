@@ -29,6 +29,7 @@ using System.Text;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
+using ZyGames.Framework.Game.Config;
 using ZyGames.Framework.Script;
 
 namespace ZyGames.Framework.Game.Lang
@@ -39,12 +40,10 @@ namespace ZyGames.Framework.Game.Lang
     public class Language
     {
         private static readonly object syncLock = new object();
-        private static string _typeName;
         private static dynamic _instance;
 
         static Language()
         {
-            _typeName = ConfigUtils.GetSetting("Game.Language.TypeName", "Game.src.Locale.DefaultLanguage");
             _instance = new Language();
         }
 
@@ -79,7 +78,7 @@ namespace ZyGames.Framework.Game.Lang
         /// </summary>
         public static void SetLang()
         {
-            SetLang(_typeName);
+            SetLang(null);
         }
 
         /// <summary>
@@ -98,22 +97,27 @@ namespace ZyGames.Framework.Game.Lang
         /// </summary>
         private static void SetLang(string typeName)
         {
+            if (string.IsNullOrEmpty(typeName))
+            {
+                typeName = ConfigManager.Configger.GetFirstOrAddConfig<AppServerSection>().LanguageTypeName;
+            }
+
             var obj = ScriptEngines.ExecuteCSharp(typeName);
             if (obj != null)
             {
                 _instance = obj;
+                return;
+            }
+            //get default lang
+            typeName = ConfigManager.Configger.GetFirstOrAddConfig<AppServerSection>().LanguageTypeName;
+            var type = Type.GetType(typeName, false, false);
+            if (type != null)
+            {
+                _instance = type.CreateInstance();
             }
             else
             {
-                var type = Type.GetType(_typeName, false, false);
-                if (type != null)
-                {
-                    _instance = type.CreateInstance();
-                }
-                else
-                {
-                    TraceLog.WriteWarn("Can not find the corresponding language configuration,typeName:{0}", typeName);//By Seamoon
-                }
+                TraceLog.WriteWarn("Can not find the corresponding language configuration,typeName:{0}", typeName);//By Seamoon
             }
         }
 
@@ -133,16 +137,35 @@ namespace ZyGames.Framework.Game.Lang
         /// The no login or timeout code
         /// </summary>
         public int TimeoutCode = 10001;
+
         /// <summary>
         /// Was kicked out of the server error code
         /// </summary>
         /// <value>The kicked out code.</value>
         public int KickedOutCode = 10002;
+
         /// <summary>
         /// Request param error code
         /// </summary>
         /// <value>The validate code.</value>
         public int ValidateCode = 10003;
+
+        /// <summary>
+        ///  Duplicate of error code
+        /// </summary>
+        /// <value>The kicked out code.</value>
+        public int DuplicateCode = 10004;
+
+        /// <summary>
+        ///  Maintain of error code
+        /// </summary>
+        /// <value>The kicked out code.</value>
+        public int MaintainCode = 10005;
+        /// <summary>
+        ///  lock time of error code
+        /// </summary>
+        /// <value>The kicked out code.</value>
+        public int LockTimeoutCode = 10006;
 
         /// <summary>
         /// 验签出错

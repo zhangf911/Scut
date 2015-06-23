@@ -30,7 +30,7 @@ using ZyGames.Framework.Common.Serialization;
 namespace ZyGames.Framework.Event
 {
     /// <summary>
-    /// 实体变更事件,定义属性时不要使用get;set简写方式，在WebService调用时只读时会有异常
+    /// 实体变更事件
     /// </summary>
     [ProtoContract, Serializable]
     public class EntityChangeEvent : IItemChangeEvent
@@ -109,7 +109,7 @@ namespace ZyGames.Framework.Event
         /// 当前对象绑定的Chang事件
         /// </summary>
         [JsonIgnore]
-        internal override CacheItemChangeEvent ItemEvent
+        public override CacheItemChangeEvent ItemEvent
         {
             get { return _itemEvent; }
         }
@@ -120,10 +120,11 @@ namespace ZyGames.Framework.Event
         /// 当前对象绑定的Chang事件
         /// </summary>
         [JsonIgnore]
-        internal override CacheItemChangeEvent ChildrenEvent
+        public override CacheItemChangeEvent ChildrenEvent
         {
             get { return _childrenEvent; }
         }
+
 
         /// <summary>
         /// 正在被修改中
@@ -164,11 +165,31 @@ namespace ZyGames.Framework.Event
             if (!_isDisableEvent && ChildrenEvent != null && changeEvent is IItemChangeEvent)
             {
                 var child = (IItemChangeEvent)changeEvent;
-                ChildrenEvent.AddSingleItemEvent(child.UnChangeNotify);
+                //注册多个子类的事件
+                ChildrenEvent.AddSingleItemEvent(child.UnChangeNotify, null);
                 var e = child.ItemEvent;
                 if (e != null)
                 {
-                    e.AddSingleItemEvent(NotifyByChildren);
+                    //注册父亲类单一事件
+                    e.AddSingleItemEvent(NotifyByChildren, this);
+
+                }
+            }
+        }
+
+        internal void CheckSingleBindEvent(object changeEvent)
+        {
+            if (!_isDisableEvent && ChildrenEvent != null && changeEvent is IItemChangeEvent)
+            {
+                var child = (IItemChangeEvent)changeEvent;
+                if (child.ItemEvent != null && child.ItemEvent.Parent != null)
+                {
+                    var parent = child.ItemEvent.Parent as IItemChangeEvent;
+                    throw new Exception(string.Format("The \"{0}\" has been the other {1} object binding cannot be added",
+                        changeEvent.GetType().FullName,
+                        parent != null && parent.ItemEvent != null && parent.ItemEvent.Parent != null
+                        ? parent.ItemEvent.Parent.GetType().FullName
+                        : parent != null ? parent.PropertyName : ""));
                 }
             }
         }
@@ -252,18 +273,33 @@ namespace ZyGames.Framework.Event
                 try
                 {
                     EnterLock();
-                    Interlocked.Exchange(ref _modified, 1);
+                    DelayNotify();
                     action();
                 }
                 finally
                 {
-                    Interlocked.Exchange(ref _modified, 0);
-                    Notify(this, CacheItemChangeType.Modify, PropertyName);
+                    TriggerNotify();
                     ExitLock();
                 }
             }
         }
 
+        /// <summary>
+        /// 推迟数据改变通知
+        /// </summary>
+        public void DelayNotify()
+        {
+            Interlocked.Exchange(ref _modified, 1);
+        }
+
+        /// <summary>
+        /// 触发通知
+        /// </summary>
+        public override void TriggerNotify()
+        {
+            Interlocked.Exchange(ref _modified, 0);
+            Notify(this, CacheItemChangeType.Modify, PropertyName);
+        }
 
         /// <summary>
         /// 触发修改通知事件
@@ -283,6 +319,7 @@ namespace ZyGames.Framework.Event
             IItemChangeEvent val = obj as IItemChangeEvent;
             if (val != null)
             {
+                val.IsInCache = true;
                 val.PropertyName = PropertyName;
                 AddChildrenListener(val);
             }

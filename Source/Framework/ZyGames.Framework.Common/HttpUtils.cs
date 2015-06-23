@@ -1,4 +1,27 @@
-﻿using System;
+﻿/****************************************************************************
+Copyright (c) 2013-2015 scutgame.com
+
+http://www.scutgame.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+****************************************************************************/
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -48,6 +71,21 @@ namespace ZyGames.Framework.Common
             return Get(url, contentType, null, string.Empty, null).GetResponseStream();
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="url"></param>
+        /// <param name="contentType"></param>
+        /// <param name="timeout"></param>
+        /// <param name="userAgent"></param>
+        /// <param name="cookies"></param>
+        /// <returns></returns>
+        public static Task<WebResponse> GetAsync(string url, string contentType, int? timeout, string userAgent, CookieCollection cookies)
+        {
+            var request = DoGetRequest(url, contentType, timeout, userAgent, cookies);
+            return request.GetResponseAsync();
+        }
+
         /// <summary>  
         /// Get request  
         /// </summary>  
@@ -58,6 +96,12 @@ namespace ZyGames.Framework.Common
         /// <param name="cookies">随同HTTP请求发送的Cookie信息，如果不需要身份验证可以为空</param>  
         /// <returns></returns>  
         public static HttpWebResponse Get(string url, string contentType, int? timeout, string userAgent, CookieCollection cookies)
+        {
+            var request = DoGetRequest(url, contentType, timeout, userAgent, cookies);
+            return request.GetResponse() as HttpWebResponse;
+        }
+
+        private static HttpWebRequest DoGetRequest(string url, string contentType, int? timeout, string userAgent, CookieCollection cookies)
         {
             if (string.IsNullOrEmpty(url))
             {
@@ -82,7 +126,7 @@ namespace ZyGames.Framework.Common
                 request.CookieContainer = new CookieContainer();
                 request.CookieContainer.Add(cookies);
             }
-            return request.GetResponse() as HttpWebResponse;
+            return request;
         }
 
         /// <summary>
@@ -101,28 +145,18 @@ namespace ZyGames.Framework.Common
         /// <summary>
         /// Post request
         /// </summary>
-        /// <param name="url"></param>
         /// <param name="parameters"></param>
-        /// <param name="encoding"></param>
-        /// <param name="contentType"></param>
         /// <returns></returns>
-        public static Stream Post(string url, IDictionary<string, string> parameters, Encoding encoding, string contentType = "")
+        public static string BuildPostParams(IDictionary<string, string> parameters)
         {
             StringBuilder buffer = new StringBuilder();
-            int i = 0;
+            string val;
             foreach (string key in parameters.Keys)
             {
-                if (i > 0)
-                {
-                    buffer.AppendFormat("&{0}={1}", key, parameters[key]);
-                }
-                else
-                {
-                    buffer.AppendFormat("{0}={1}", key, parameters[key]);
-                }
-                i++;
+                val = HttpUtility.UrlEncode(parameters[key]);
+                buffer.AppendFormat("&{0}={1}", key, val);
             }
-            return Post(url, buffer.ToString(), encoding, contentType);
+            return buffer.ToString().TrimStart('&');
         }
 
         /// <summary>
@@ -138,6 +172,38 @@ namespace ZyGames.Framework.Common
             return Post(url, parameters, null, string.Empty, encoding, contentType, null).GetResponseStream();
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="url"></param>
+        /// <param name="parameters"></param>
+        /// <param name="timeout"></param>
+        /// <param name="userAgent"></param>
+        /// <param name="encoding"></param>
+        /// <param name="contentType"></param>
+        /// <param name="cookies"></param>
+        /// <returns></returns>
+        public static Task<WebResponse> PostAsync(string url, string parameters, int? timeout, string userAgent, Encoding encoding, string contentType, CookieCollection cookies)
+        {
+            return PostAsync(url, encoding.GetBytes(parameters), timeout, userAgent, contentType, cookies);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="url"></param>
+        /// <param name="inputBytes"></param>
+        /// <param name="timeout"></param>
+        /// <param name="userAgent"></param>
+        /// <param name="contentType"></param>
+        /// <param name="cookies"></param>
+        /// <returns></returns>
+        public static Task<WebResponse> PostAsync(string url, byte[] inputBytes, int? timeout, string userAgent, string contentType, CookieCollection cookies)
+        {
+            var request = DoPostRequest(url, inputBytes, timeout, userAgent, contentType, cookies);
+            return request.GetResponseAsync();
+        }
+
         /// <summary>  
         /// Post request 
         /// </summary>  
@@ -151,13 +217,30 @@ namespace ZyGames.Framework.Common
         /// <returns></returns>  
         public static HttpWebResponse Post(string url, string parameters, int? timeout, string userAgent, Encoding encoding, string contentType, CookieCollection cookies)
         {
+            return Post(url, encoding.GetBytes(parameters), timeout, userAgent, contentType, cookies);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="url"></param>
+        /// <param name="inputBytes"></param>
+        /// <param name="timeout"></param>
+        /// <param name="userAgent"></param>
+        /// <param name="contentType"></param>
+        /// <param name="cookies"></param>
+        /// <returns></returns>
+        public static HttpWebResponse Post(string url, byte[] inputBytes, int? timeout, string userAgent, string contentType, CookieCollection cookies)
+        {
+            var request = DoPostRequest(url, inputBytes, timeout, userAgent, contentType, cookies);
+            return request.GetResponse() as HttpWebResponse;
+        }
+
+        private static HttpWebRequest DoPostRequest(string url, byte[] inputBytes, int? timeout, string userAgent, string contentType, CookieCollection cookies)
+        {
             if (string.IsNullOrEmpty(url))
             {
                 throw new ArgumentNullException("url");
-            }
-            if (encoding == null)
-            {
-                throw new ArgumentNullException("encoding");
             }
             HttpWebRequest request = null;
             //如果是发送HTTPS请求  
@@ -196,19 +279,14 @@ namespace ZyGames.Framework.Common
                 request.CookieContainer.Add(cookies);
             }
             //如果需要POST数据  
-            if (!string.IsNullOrEmpty(parameters))
+            if (inputBytes != null && inputBytes.Length > 0)
             {
-                if (parameters.Length > 0 && parameters.StartsWith("?"))
-                {
-                    parameters = parameters.Substring(1);
-                }
-                byte[] data = encoding.GetBytes(parameters);
                 using (Stream stream = request.GetRequestStream())
                 {
-                    stream.Write(data, 0, data.Length);
+                    stream.Write(inputBytes, 0, inputBytes.Length);
                 }
             }
-            return request.GetResponse() as HttpWebResponse;
+            return request;
         }
 
         private static bool CheckValidationResult(object sender, X509Certificate certificate, X509Chain chain,

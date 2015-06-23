@@ -70,7 +70,7 @@ namespace ZyGames.Framework.Game.Task
         /// <returns><c>true</c>, if task was inited, <c>false</c> otherwise.</returns>
         protected bool InitTask()
         {
-            _taskScope = ScriptEngines.Execute(ScriptEngines.PythonDirName + "/Lib/Task.py", null);
+            _taskScope = ScriptEngines.Execute("Lib.Task", null);
             return _taskScope != null;
         }
 
@@ -83,7 +83,7 @@ namespace ZyGames.Framework.Game.Task
             List<T> taskList = new List<T>();
             if (_isUsedPy)
             {
-                IronPython.Runtime.List list = _taskScope.get(UserId, currTaskId);
+               var list = _taskScope.get(UserId, currTaskId);
                 foreach (var item in list)
                 {
                     taskList.Add((T)item);

@@ -23,9 +23,13 @@ THE SOFTWARE.
 ****************************************************************************/
 using System;
 using System.Diagnostics;
+using System.Text;
 using System.Web;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
+using ZyGames.Framework.Game.Config;
+using ZyGames.Framework.Game.Contract;
+using ZyGames.Framework.RPC.Sockets;
 
 namespace ZyGames.Framework.Game.Service
 {
@@ -35,21 +39,11 @@ namespace ZyGames.Framework.Game.Service
     /// </summary>
     public abstract class GameStruct
     {
-        /// <summary>
-        /// The action time out.
-        /// </summary>
-        public static int ActionTimeOut = 500;
-
-        static GameStruct()
-        {
-            int timeOut = ConfigUtils.GetSetting("ActionTimeOut", 0);
-            if (timeOut > 0) ActionTimeOut = timeOut;
-        }
 
         /// <summary>
         /// 默认的返回错误信息
         /// </summary>
-        public const string DefaultErrorInfo = "访问失败";
+        public const string DefaultErrorInfo = "Access fail";
 
         /// <summary>
         /// 接口访问处理情况
@@ -65,6 +59,15 @@ namespace ZyGames.Framework.Game.Service
             /// </summary>
             Fail
         }
+        /// <summary>
+        /// 
+        /// </summary>
+        protected bool IsWebSocket = false;
+
+        /// <summary>
+        /// 
+        /// </summary>
+        protected Encoding encoding = Encoding.UTF8;
         /// <summary>
         /// 接口访问开始时间
         /// </summary>
@@ -89,9 +92,29 @@ namespace ZyGames.Framework.Game.Service
         protected DataStruct dataStruct = new DataStruct();
 
         /// <summary>
+        /// 当前游戏会话
+        /// </summary>
+        public GameSession Current { get; internal set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public int UserId
+        {
+            get
+            {
+                return Current != null ? Current.UserId : 0;
+            }
+        }
+        /// <summary>
         /// ActionID，接口编号
         /// </summary>
         protected int actionId;
+
+        /// <summary>
+        /// 本次登录SessionID句柄
+        /// </summary>
+        protected string Sid;
         /// <summary>
         /// 是否是错误的URL请求串
         /// </summary>
@@ -103,12 +126,17 @@ namespace ZyGames.Framework.Game.Service
         protected bool IsPush = false;
 
         /// <summary>
+        /// 是否影响输出, True：不响应
+        /// </summary>
+        protected bool IsNotRespond;
+
+        /// <summary>
         /// 请求上来的消息编号，主动下发编号为0
         /// </summary>
         protected int MsgId = 0;
 
         /// <summary>
-        /// 消息St
+        /// 时间缀
         /// </summary>
         protected string St = "st";
 
@@ -164,7 +192,37 @@ namespace ZyGames.Framework.Game.Service
         {
             this.actionId = aActionId;
         }
+        /// <summary>
+        /// 
+        /// </summary>
+        public void PushIntoStack(UInt64 obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
+        /// int类型
+        /// </summary>
+        /// <param name="obj"></param>
+        public void PushIntoStack(UInt32 obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
+        /// short类型
+        /// </summary>
+        /// <param name="obj"></param>
+        public void PushIntoStack(UInt16 obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        public void PushIntoStack(long obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
         /// <summary>
         /// int类型
         /// </summary>
@@ -182,10 +240,26 @@ namespace ZyGames.Framework.Game.Service
             dataStruct.PushIntoStack(obj);
         }
         /// <summary>
+        /// bool类型
+        /// </summary>
+        /// <param name="obj"></param>
+        public void PushIntoStack(bool obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
         /// byte类型
         /// </summary>
         /// <param name="obj"></param>
         public void PushIntoStack(byte obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="obj"></param>
+        public void PushIntoStack(byte[] obj)
         {
             dataStruct.PushIntoStack(obj);
         }
@@ -197,6 +271,38 @@ namespace ZyGames.Framework.Game.Service
         {
             dataStruct.PushIntoStack(obj);
         }
+        /// <summary>
+        /// 
+        /// </summary>
+        public void PushIntoStack(double obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        public void PushIntoStack(float obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="obj"></param>
+        public void PushIntoStack(DateTime obj)
+        {
+            dataStruct.PushIntoStack(obj);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="obj"></param>
+        /// <param name="useGzip"></param>
+        public void PushIntoStack(object obj, bool useGzip)
+        {
+            dataStruct.PushIntoStack(obj, useGzip);
+        }
+
         /// <summary>
         /// 将数据加到栈尾
         /// </summary>
@@ -211,7 +317,10 @@ namespace ZyGames.Framework.Game.Service
         /// </summary>
         public void WriteAction(BaseGameResponse response)
         {
-            dataStruct.WriteAction(response, actionId, errorCode, errorInfo, MsgId, St);
+            if (!IsNotRespond)
+            {
+                dataStruct.WriteAction(response, actionId, errorCode, errorInfo, MsgId, St);
+            }
         }
 
         /// <summary>
@@ -231,12 +340,22 @@ namespace ZyGames.Framework.Game.Service
             this.iVisitEndTime = DateTime.Now;
             WatchAction();
             this.SaveActionLogToDB(LogActionStat.Fail, logActionResult);
-            response.WriteError(actionGetter, errorCode, errorInfo);
+
+            if (!IsNotRespond)
+            {
+                response.WriteError(actionGetter, errorCode, errorInfo);
+            }
             //dataStruct.WriteAction(response, actionId, errorCode, errorInfo, MsgId, St);
         }
 
         private void WatchAction()
         {
+            int actionTimeOut = ConfigManager.Configger.GetFirstOrAddConfig<AppServerSection>().ActionTimeOut;
+            var time = (iVisitEndTime - iVisitBeginTime).TotalMilliseconds;
+            if (actionTimeOut > 0 && time > actionTimeOut)
+            {
+                TraceLog.WriteWarn("Action-{2} Uid:{3} access timeout {0}/{1}ms.", time, actionTimeOut, actionId, Current.UserId);
+            }
         }
 
         //protected void InitAction(System.Web.HttpResponse m_Response)
@@ -265,10 +384,54 @@ namespace ZyGames.Framework.Game.Service
         /// </summary>
         public virtual void WriteResponse(BaseGameResponse response)
         {
-            BuildPacket();
+            if (IsWebSocket)
+            {
+                JsonWriteResponse(response);
+            }
+            else
+            {
+                BinaryWriteResponse(response);
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="response"></param>
+        protected void JsonWriteResponse(BaseGameResponse response)
+        {
+            if (!IsNotRespond)
+            {
+                var message = BuildJsonPack();
+                response.Write(encoding.GetBytes(message));
+            }
+            WriteEnd();
+        }
+
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="response"></param>
+        protected void BinaryWriteResponse(BaseGameResponse response)
+        {
+            if (!IsNotRespond)
+            {
+                BuildPacket();
+            }
             WriteAction(response);
             WriteEnd();
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        protected virtual string BuildJsonPack()
+        {
+            return string.Empty;
+        }
+
         /// <summary>
         /// 
         /// </summary>
@@ -299,7 +462,7 @@ namespace ZyGames.Framework.Game.Service
         /// </summary>
         public virtual void BuildPacket()
         {
-            
+
         }
 
         #region //日志记录
@@ -337,24 +500,20 @@ namespace ZyGames.Framework.Game.Service
         /// <summary>
         /// 保存日志到文本文件
         /// </summary>
-        /// <param name="aExObj">出错时的异常描述</param>
-        protected void SaveLog(Exception aExObj)
+        /// <param name="error">出错时的异常描述</param>
+        protected void SaveLog(Exception error)
         {
-            SaveLog("", aExObj);
+            SaveLog("", error);
         }
 
         /// <summary>
         /// 保存日志到文本文件
         /// </summary>
-        /// <param name="aUseLog"></param>
-        /// <param name="aExObj"></param>
-        protected void SaveLog(String aUseLog, Exception aExObj)
+        /// <param name="message"></param>
+        /// <param name="error"></param>
+        protected void SaveLog(String message, Exception error)
         {
-            if (oBaseLog == null)
-            {
-                oBaseLog = new BaseLog("Action" + this.actionId.ToString());
-            }
-            oBaseLog.SaveLog(aUseLog, aExObj);
+            TraceLog.WriteError("Action{0}{1} error:{2}.\r\n{3}", actionId, message, error, actionGetter.ToParamString());
         }
 
         /// <summary>

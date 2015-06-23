@@ -140,6 +140,25 @@ namespace ZyGames.Framework.Common.Log
             }
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="message"></param>
+        public static void WriteLine(string message)
+        {
+            WriteLine(LogLevel.Info, message);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="level"></param>
+        /// <param name="message"></param>
+        public static void WriteLine(LogLevel level, string message)
+        {
+            _logger.Log(level, message);
+        }
+
         private static string BuildMessage(string info)
         {
             return LogHelper.BuildMessage(info, null);
@@ -148,19 +167,39 @@ namespace ZyGames.Framework.Common.Log
         {
             StringBuilder stringBuilder = new StringBuilder();
             HttpContext current = HttpContext.Current;
-            stringBuilder.AppendFormat("Time:{0}-{1}\r\n", DateTime.Now, info);
-            if (current != null)
+            try
             {
-                stringBuilder.AppendFormat("Url:{0}\r\n", current.Request.Url);
-                if (null != current.Request.UrlReferrer)
+                stringBuilder.AppendFormat("Time:{0}-{1}\r\n", DateTime.Now, info);
+                if (current != null)
                 {
-                    stringBuilder.AppendFormat("UrlReferrer:{0}\r\n", current.Request.UrlReferrer);
+                    HttpRequest request = null;
+                    try
+                    {
+                        //IIS 7.0 集成模式不能用
+                        request = current.Request;
+                    }
+                    catch
+                    {
+                    }
+
+                    if (request != null)
+                    {
+                        stringBuilder.AppendFormat("Url:{0}\r\n", current.Request.Url);
+                        if (null != current.Request.UrlReferrer)
+                        {
+                            stringBuilder.AppendFormat("UrlReferrer:{0}\r\n", current.Request.UrlReferrer);
+                        }
+                        stringBuilder.AppendFormat("UserHostAddress:{0}\r\n", current.Request.UserHostAddress);
+                    }
                 }
-                stringBuilder.AppendFormat("UserHostAddress:{0}\r\n", current.Request.UserHostAddress);
+                if (ex != null)
+                {
+                    stringBuilder.AppendFormat("Exception:{0}\r\n", ex.ToString());
+                }
             }
-            if (ex != null)
+            catch (Exception error)
             {
-                stringBuilder.AppendFormat("Exception:{0}\r\n", ex.ToString());
+                stringBuilder.AppendLine(info + ", Exception:\r\n" + error);
             }
             stringBuilder.AppendLine();
             return stringBuilder.ToString();

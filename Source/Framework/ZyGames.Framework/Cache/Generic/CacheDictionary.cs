@@ -77,6 +77,16 @@ namespace ZyGames.Framework.Cache.Generic
         /// <summary>
         /// 
         /// </summary>
+        /// <param name="changeEvent"></param>
+        public override void AddChildrenListener(object changeEvent)
+        {
+            CheckSingleBindEvent(changeEvent);
+            base.AddChildrenListener(changeEvent);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
         public Func<string, CacheDictionary<T, V>, bool> ExpiredHandle
         {
             get;
@@ -131,9 +141,9 @@ namespace ZyGames.Framework.Cache.Generic
         /// <param name="item"></param>
         public void Add(KeyValuePair<T, V> item)
         {
+            AddChildrenListener(item.Value);
             if (_cacheStruct.TryAdd(item.Key, item.Value))
             {
-                AddChildrenListener(item.Value);
                 Notify(item.Value, CacheItemChangeType.Add, PropertyName);
             }
         }
@@ -219,9 +229,9 @@ namespace ZyGames.Framework.Cache.Generic
         /// <param name="value"></param>
         public void Add(T key, V value)
         {
+            AddChildrenListener(value);
             if (_cacheStruct.TryAdd(key, value))
             {
-                AddChildrenListener(value);
                 Notify(value, CacheItemChangeType.Add, PropertyName);
             }
         }
@@ -266,8 +276,8 @@ namespace ZyGames.Framework.Cache.Generic
                 {
                     RemoveChildrenListener(old);
                 }
-                _cacheStruct[key] = value;
                 AddChildrenListener(value);
+                _cacheStruct[key] = value;
                 Notify(value, CacheItemChangeType.Modify, PropertyName);
             }
         }

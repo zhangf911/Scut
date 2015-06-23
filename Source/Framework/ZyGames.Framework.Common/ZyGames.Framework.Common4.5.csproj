@@ -42,6 +42,9 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\Lib\Mono.Cecil.dll</HintPath>
     </Reference>
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>..\Lib\Mono.Cecil.Pdb.dll</HintPath>
+    </Reference>
     <Reference Include="Newtonsoft.Json, Version=4.5.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>..\Lib\Newtonsoft.Json.dll</HintPath>
@@ -58,6 +61,7 @@
     <Reference Include="System.configuration" />
     <Reference Include="System.Core" />
     <Reference Include="System.Runtime.Caching" />
+    <Reference Include="System.ServiceModel" />
     <Reference Include="System.Web" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -72,11 +76,22 @@
     <Compile Include="BaseDisposable.cs" />
     <Compile Include="Build\AssemblyBuilder.cs" />
     <Compile Include="Build\WeavingEntityTask.cs" />
+    <Compile Include="Configuration\ConfigManager.cs" />
+    <Compile Include="Configuration\DefaultDataConfigger.cs" />
+    <Compile Include="Configuration\IConfigger.cs" />
+    <Compile Include="Configuration\ConnectionSection.cs" />
     <Compile Include="Configuration\ConfigUtils.cs" />
+    <Compile Include="Configuration\ConfigSection.cs" />
+    <Compile Include="Configuration\ConfigNode.cs" />
+    <Compile Include="Configuration\DataConfigger.cs" />
     <Compile Include="Event\CustomEvent.cs" />
+    <Compile Include="Event\TimeoutNotifyEventArgs.cs" />
+    <Compile Include="Event\NotifyEventArgs.cs" />
+    <Compile Include="Event\EventNotifier.cs" />
     <Compile Include="HttpUtils.cs" />
     <Compile Include="Locking\ILocking.cs" />
     <Compile Include="Locking\IMonitorStrategy.cs" />
+    <Compile Include="Locking\LockCachePool.cs" />
     <Compile Include="Locking\MonitorLockStrategy.cs" />
     <Compile Include="Locking\MonitorSlim.cs" />
     <Compile Include="Locking\WriteLockSlim.cs" />
@@ -84,7 +99,9 @@
     <Compile Include="Log\LogHelper.cs" />
     <Compile Include="Log\TraceLog.cs" />
     <Compile Include="MathUtils.cs" />
+    <Compile Include="ObjectCloner.cs" />
     <Compile Include="ObjectExtend.cs" />
+    <Compile Include="ObjectPoolWithExpire.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RandomUtils.cs" />
     <Compile Include="Reflect\CallSiteCache.cs" />
@@ -97,14 +114,43 @@
     <Compile Include="Security\CryptoHelper.cs" />
     <Compile Include="Security\DESAlgorithmNew.cs" />
     <Compile Include="Security\DesCopy.cs" />
+    <Compile Include="Serialization\ICacheSerializer.cs" />
+    <Compile Include="Serialization\JsonCacheSerializer.cs" />
     <Compile Include="Serialization\JsonUtils.cs" />
+    <Compile Include="Serialization\ProtobufCacheSerializer.cs" />
     <Compile Include="Serialization\ProtoBufUtils.cs" />
     <Compile Include="Serialization\ProtoObject.cs" />
+    <Compile Include="Threading\CallerThreadContext.cs" />
+    <Compile Include="Threading\CanceledWorkItemsGroup.cs" />
+    <Compile Include="Threading\EventWaitHandle.cs" />
+    <Compile Include="Threading\EventWaitHandleFactory.cs" />
+    <Compile Include="Threading\Exceptions.cs" />
+    <Compile Include="Threading\Interfaces.cs" />
+    <Compile Include="Threading\InternalInterfaces.cs" />
+    <Compile Include="Threading\PriorityQueue.cs" />
+    <Compile Include="Threading\SLExt.cs" />
+    <Compile Include="Threading\SmartThreadPool.cs" />
+    <Compile Include="Threading\SmartThreadPool.ThreadEntry.cs" />
+    <Compile Include="Threading\Stopwatch.cs" />
+    <Compile Include="Threading\STPEventWaitHandle.cs" />
+    <Compile Include="Threading\STPPerformanceCounter.cs" />
+    <Compile Include="Threading\STPStartInfo.cs" />
+    <Compile Include="Threading\SynchronizedDictionary.cs" />
+    <Compile Include="Threading\WIGStartInfo.cs" />
+    <Compile Include="Threading\WorkItem.cs" />
+    <Compile Include="Threading\WorkItem.WorkItemResult.cs" />
+    <Compile Include="Threading\WorkItemFactory.cs" />
+    <Compile Include="Threading\WorkItemInfo.cs" />
+    <Compile Include="Threading\WorkItemResultTWrapper.cs" />
+    <Compile Include="Threading\WorkItemsGroup.cs" />
+    <Compile Include="Threading\WorkItemsGroupBase.cs" />
+    <Compile Include="Threading\WorkItemsQueue.cs" />
     <Compile Include="Timing\BaseTask.cs" />
     <Compile Include="Timing\CacheListener.cs" />
     <Compile Include="Timing\CodeTimer.cs" />
     <Compile Include="Timing\PlanConfig.cs" />
     <Compile Include="Timing\RunTimeWatch.cs" />
+    <Compile Include="Timing\SyncTimer.cs" />
     <Compile Include="Timing\TaskDispatch.cs" />
     <Compile Include="Timing\TimeListener.cs" />
     <Compile Include="VersionConfig.cs" />

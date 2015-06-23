@@ -22,17 +22,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
-using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
+using System.Linq;
 using System.Threading;
-using IronPython.Modules;
 using MySql.Data.MySqlClient;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Common.Log;
 using ZyGames.Framework.Common.Serialization;
+using ZyGames.Framework.Common.Threading;
+using ZyGames.Framework.Config;
 using ZyGames.Framework.Redis;
-using ZyGames.Framework.RPC.Sockets.Threading;
 
 namespace ZyGames.Framework.Data
 {
@@ -41,6 +41,7 @@ namespace ZyGames.Framework.Data
     /// </summary>
     public abstract class SqlStatementManager
     {
+        private static string SlaveMessageQueue;
         /// <summary>
         /// 同步到数据库的Sql队列, 存储格式List:SqlStatement对象
         /// </summary>
@@ -53,93 +54,59 @@ namespace ZyGames.Framework.Data
         private static SmartThreadPool _threadPools;
         private static int[] _isWatchWorking;
         private const int sqlSyncPackSize = 999;
-        private const int DefSqlSyncQueueNum = 2;
 
-        /// <summary>
-        /// Sql sync queue num
-        /// </summary>
-        public static int SqlSyncQueueNum { get; set; }
 
         static SqlStatementManager()
         {
-            SqlSyncQueueNum = ConfigUtils.GetSetting("SqlSyncQueueNum", DefSqlSyncQueueNum);
-            if (SqlSyncQueueNum < 1) SqlSyncQueueNum = DefSqlSyncQueueNum;
-            _isWatchWorking = new int[SqlSyncQueueNum];
         }
-
-#if TEST_METHOD
-        public static void TestCheckSqlSyncQueue(int identity)
+        
+        private static MessageQueueSection GetSection()
         {
-            if (Interlocked.Exchange(ref _isWatchWorking[identity], 1) == 0)
-            {
-                try
-                {
-                    string queueKey = GetSqlQueueKey(identity);
-                    string workingKey = queueKey + "_temp";
-                    bool result;
-                    byte[][] bufferBytes = new byte[0][];
-                    do
-                    {
-                        result = false;
-                        RedisConnectionPool.ProcessReadOnly(client =>
-                        {
-                            bool hasWorkingQueue = client.ContainsKey(workingKey);
-                            bool hasNewWorkingQueue = client.ContainsKey(queueKey);
-
-                            if (!hasWorkingQueue && !hasNewWorkingQueue)
-                            {
-                                return;
-                            }
-                            if (!hasWorkingQueue)
-                            {
-                                try
-                                {
-                                    client.Rename(queueKey, workingKey);
-                                }
-                                catch { }
-                            }
-
-                            bufferBytes = client.ZRange(workingKey, 0, sqlSyncPackSize);
-                            if (bufferBytes.Length > 0)
-                            {
-                                client.ZRemRangeByRank(workingKey, 0, sqlSyncPackSize);
-                                result = true;
-                            }
-                            else
-                            {
-                                client.Remove(workingKey);
-                            }
-                        });
-                        if (!result)
-                        {
-                            break;
-                        }
-                        DoProcessSqlSyncQueue(workingKey, bufferBytes);
-                    } while (true);
-                }
-                catch (Exception ex)
-                {
-                    TraceLog.WriteError("OnCheckSqlSyncQueue error:{0}", ex);
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref _isWatchWorking[identity], 0);
-                }
-            }
+            return ConfigManager.Configger.GetFirstOrAddConfig<MessageQueueSection>();
         }
-#endif
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public static bool IsUseSyncQueue
+        {
+            get { return _queueWatchTimers != null; }
+        }
+
         /// <summary>
         /// Start
         /// </summary>
         public static void Start()
         {
-            _queueWatchTimers = new Timer[SqlSyncQueueNum];
-            for (int i = 0; i < SqlSyncQueueNum; i++)
+            TraceLog.ReleaseWriteDebug("Sql write queue start init...");
+            MessageQueueSection section = GetSection();
+            SlaveMessageQueue = section.SlaveMessageQueue;
+            if (_queueWatchTimers != null && _queueWatchTimers.Length != section.SqlSyncQueueNum)
             {
-                _queueWatchTimers[i] = new Timer(OnCheckSqlSyncQueue, i, 100, 100);
+                foreach (var timer in _queueWatchTimers)
+                {
+                    try
+                    {
+                        timer.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        TraceLog.WriteError("Sql write queue stop error:{0}", ex);
+                    }
+                }
+                _queueWatchTimers = null;
             }
-            _threadPools = new SmartThreadPool(180 * 1000, 100, 5);
-            _threadPools.Start();
+            if (_queueWatchTimers == null)
+            {
+                _isWatchWorking = new int[section.SqlSyncQueueNum];
+                _queueWatchTimers = new Timer[_isWatchWorking.Length];
+                for (int i = 0; i < _queueWatchTimers.Length; i++)
+                {
+                    _queueWatchTimers[i] = new Timer(OnCheckSqlSyncQueue, i, 100, 100);
+                }
+                _threadPools = new SmartThreadPool(180 * 1000, 100, 5);
+                _threadPools.Start();
+            }
         }
 
         /// <summary>
@@ -196,6 +163,10 @@ namespace ZyGames.Framework.Data
             bool result = false;
             try
             {
+                if (!IsUseSyncQueue)
+                {
+                    return false;
+                }
                 string key = GetSqlQueueKey(statement.IdentityID);
                 byte[] value = ProtoBufUtils.Serialize(statement);
                 RedisConnectionPool.Process(client => client.ZAdd(key, DateTime.Now.Ticks, value));
@@ -219,7 +190,7 @@ namespace ZyGames.Framework.Data
             bool result = false;
             try
             {
-                RedisConnectionPool.Process(client => client.ZAdd(SqlSyncErrorQueueKey, DateTime.Now.Ticks, value));
+                RedisConnectionPool.Process(client => client.ZAdd(SlaveMessageQueue + SqlSyncErrorQueueKey, DateTime.Now.Ticks, value));
                 result = true;
             }
             catch (Exception ex)
@@ -229,12 +200,18 @@ namespace ZyGames.Framework.Data
             return result;
         }
 
+        /// <summary>
+        /// Sql process queue
+        /// </summary>
+        /// <param name="identityId"></param>
+        /// <returns></returns>
         internal static string GetSqlQueueKey(int identityId)
         {
-            int index = identityId % SqlSyncQueueNum;
-            string queueKey = string.Format("{0}{1}",
+            int index = identityId % _queueWatchTimers.Length;
+            string queueKey = string.Format("{0}{1}{2}",
+                SlaveMessageQueue,
                 SqlSyncQueueKey,
-                SqlSyncQueueNum > 1 ? ":" + index : "");
+                _queueWatchTimers.Length > 1 ? ":" + index : "");
             return queueKey;
         }
 
@@ -303,13 +280,15 @@ namespace ZyGames.Framework.Data
         {
             try
             {
+                bool hasClear = false;
                 foreach (var buffer in bufferBytes)
                 {
+                    DbBaseProvider dbProvider = null;
                     SqlStatement statement = null;
                     try
                     {
                         statement = ProtoBufUtils.Deserialize<SqlStatement>(buffer);
-                        var dbProvider = DbConnectionProvider.CreateDbProvider("", statement.ProviderType, statement.ConnectionString);
+                        dbProvider = DbConnectionProvider.CreateDbProvider("", statement.ProviderType, statement.ConnectionString);
                         var paramList = ToSqlParameter(dbProvider, statement.Params);
                         dbProvider.ExecuteQuery(statement.CommandType, statement.CommandText, paramList);
                     }
@@ -317,6 +296,12 @@ namespace ZyGames.Framework.Data
                     {
                         TraceLog.WriteSqlError("Error:{0}\r\nSql>>\r\n{1}", e, statement != null ? statement.CommandText : "");
                         PutError(buffer);
+                        if (!hasClear && dbProvider != null)
+                        {
+                            //modify error: 40 - Could not open a connection to SQL Server
+                            hasClear = true;
+                            dbProvider.ClearAllPools();
+                        }
                     }
                 }
             }

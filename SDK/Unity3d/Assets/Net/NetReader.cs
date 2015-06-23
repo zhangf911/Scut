@@ -1,3 +1,5 @@
+using System.Reflection;
+using Newtonsoft.Json;
 using UnityEngine;
 using System.Collections.Generic;
 using System;
@@ -35,6 +37,11 @@ public class NetReader
         _formater = formater;
     }
 
+    public bool Success
+    {
+        get { return StatusCode == 0; }
+    }
+
     public int StatusCode
     {
         get { return _head == null ? 10000 : _head.StatusCode; }
@@ -60,6 +67,8 @@ public class NetReader
         get { return _head == null ? "" : _head.StrTime; }
     }
 
+    private object Data;
+
     public void SetBuffer(byte[] buf)
     {
         _bytes = buf;
@@ -72,9 +81,23 @@ public class NetReader
     /// </summary>
     /// <param name="buffer"></param>
     /// <param name="type"></param>
+    /// <param name="respContentType"></param>
     /// <returns></returns>
-    public bool pushNetStream(byte[] buffer, NetworkType type)
+    public bool pushNetStream(byte[] buffer, NetworkType type, ResponseContentType respContentType)
     {
+        if (respContentType == ResponseContentType.Json)
+        {
+            string jsonData = Encoding.UTF8.GetString(buffer);
+            Debug.Log("response json:" + jsonData);
+            if (!_formater.TryParse(jsonData, type, out _head, out Data))
+            {
+                Debug.LogError(" Failed: NetReader's pushNetStream parse error.");
+                return false;
+            }
+            SetBuffer(new byte[0]);
+            Debug.Log("parse json ok." + _head.Description);
+            return true;
+        }
         byte[] data;
         if (!_formater.TryParse(buffer, out _head, out data))
         {
@@ -112,6 +135,11 @@ public class NetReader
     public byte[] Buffer
     {
         get { return _bytes ?? new byte[0]; }
+    }
+
+    public T readValue<T>()
+    {
+        return JsonConvert.DeserializeObject<T>(JsonConvert.SerializeObject(Data));
     }
 
     public bool recordBegin()
@@ -464,5 +492,30 @@ public class NetReader
     {
         int nLen = this.getInt();
         return this.getString(nLen);
+    }
+
+    public byte[] readBytes()
+    {
+        int nLen = this.getInt();
+        return this.readBytes(nLen);
+    }
+
+    public byte[] readBytes(int nLen)
+    {
+        if (this.streamPos + nLen > this._bytes.Length)
+        {
+            Debug.Log(" Failed: 长度越界 NetReader: getString");
+            return null;
+        }
+        byte[] buffer = new byte[nLen];
+        Array.Copy(this._bytes, this.streamPos, buffer, 0, buffer.Length);
+        this.streamPos += nLen;
+
+        if (CheckRecordSize(nLen))
+        {
+            Debug.Log(" Failed: 记录长度越界 NetReader: readBytes");
+            return new Byte[0];
+        }
+        return buffer;
     }
 }

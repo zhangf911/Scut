@@ -24,55 +24,34 @@ THE SOFTWARE.
 using System;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
-using ZyGames.Framework.Common.Locking;
 using ZyGames.Framework.Common.Log;
-using ZyGames.Framework.Game.Context;
-using ZyGames.Framework.Game.Contract;
+using ZyGames.Framework.Common.Security;
+using ZyGames.Framework.Game.Config;
 using ZyGames.Framework.Game.Lang;
+using ZyGames.Framework.Game.Runtime;
 
 namespace ZyGames.Framework.Game.Service
 {
+    /// <summary>
+    /// 
+    /// </summary>
+    public class TipException : Exception
+    {
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="errorInfo"></param>
+        public TipException(string errorInfo)
+            : base(errorInfo)
+        {
+
+        }
+    }
     /// <summary>
     /// Base struct.
     /// </summary>
     public abstract class BaseStruct : GameStruct
     {
-        /// <summary>
-        /// 
-        /// </summary>
-        public static string PublishType = ConfigUtils.GetSetting("PublishType", "Release");
-
-        /// <summary>
-        /// 本次登录SessionID句柄
-        /// </summary>
-        protected string Sid;
-        /// <summary>
-        /// 提交Action用户唯一ID
-        /// </summary>
-        protected string Uid;
-
-        private int _userId;
-        /// <summary>
-        /// 
-        /// </summary>
-        public int UserId
-        {
-            get
-            {
-                return _userId;
-            }
-            set { _userId = value; }
-        }
-        /// <summary>
-        /// User创建工厂
-        /// </summary>
-        public Func<int, BaseUser> UserFactory { get; set; }
-
-        /// <summary>
-        /// 当前游戏上下文对象
-        /// </summary>
-        public GameContext Current { get; private set; }
-
         /// <summary>
         /// 兼容子类变量名
         /// </summary>
@@ -97,7 +76,8 @@ namespace ZyGames.Framework.Game.Service
         {
             get
             {
-                return PublishType.Equals("Release", StringComparison.CurrentCultureIgnoreCase);
+                var section = ConfigManager.Configger.GetFirstOrAddConfig<AppServerSection>();
+                return section.PublishType.Equals("Release", StringComparison.OrdinalIgnoreCase);
             }
         }
         /// <summary>
@@ -134,9 +114,6 @@ namespace ZyGames.Framework.Game.Service
         /// </summary>
         public void DoInit()
         {
-            _userId = actionGetter.GetUserId();
-            Uid = _userId.ToString();
-
             if (!IsPush)
             {
                 MsgId = actionGetter.GetMsgId();
@@ -146,35 +123,23 @@ namespace ZyGames.Framework.Game.Service
             {
                 St = st;
             }
-            Sid = actionGetter.GetSessionId();
-            InitContext(Sid, actionId, UserId);
+            Sid = actionGetter.SessionId;
+            Current = actionGetter.Session;
             InitAction();
             InitChildAction();
         }
 
-        private void InitContext(string sessionId, int actionId, int userId)
-        {
-            Current = GameContext.GetInstance(sessionId, actionId, userId);
-            if (userId > 0 && UserFactory != null)
-            {
-                Current.User = UserFactory(userId);
-            }
-        }
         /// <summary>
         /// 
         /// </summary>
-        /// <returns></returns>
-        public ILocking RequestLock()
+        /// <param name="response"></param>
+        /// <param name="isWriteInfo"></param>
+        public void WriteLockTimeoutAction(BaseGameResponse response, bool isWriteInfo = true)
         {
-            ILocking strategy = null;
-            strategy = Current.MonitorLock.Lock();
-            if (strategy == null || !strategy.TryEnterLock())
-            {
-                ErrorCode = Language.Instance.ErrorCode;
-                if (!IsRealse) ErrorInfo = Language.Instance.ServerBusy;
-                TraceLog.WriteError("Action-{0} Uid:{1} locked timeout.", actionId, UserId);
-            }
-            return strategy;
+            ErrorCode = Language.Instance.LockTimeoutCode;
+            if (isWriteInfo && !IsRealse) ErrorInfo = Language.Instance.ServerBusy;
+            TraceLog.WriteError("Action-{0} Uid:{1} locked timeout.", actionId, Current.UserId);
+            WriteErrorAction(response);
         }
 
         /// <summary>
@@ -212,11 +177,12 @@ namespace ZyGames.Framework.Game.Service
                     return false;
                 }
                 result = TakeAction();
-                if (Current != null && Current.UserId == 0 && UserId > 0)
-                {
-                    Current.SetValue(UserId);
-                }
                 TakeActionAffter(result);
+            }
+            catch (TipException tip)
+            {
+                Tips(tip.Message);
+                return false;
             }
             catch (Exception ex)
             {
@@ -317,6 +283,14 @@ namespace ZyGames.Framework.Game.Service
         }
 
         /// <summary>
+        /// 刷新时间缀
+        /// </summary>
+        protected virtual void RefleshSt()
+        {
+            St = MathUtils.DiffDate(MathUtils.UnixEpochDateTime).TotalSeconds.ToCeilingInt().ToString();
+        }
+
+        /// <summary>
         /// 较验参数
         /// </summary>
         /// <returns></returns>
@@ -352,5 +326,24 @@ namespace ZyGames.Framework.Game.Service
                 SaveLog(ex);
             }
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="password"></param>
+        /// <returns></returns>
+        protected virtual string DecodePassword(string password)
+        {
+            try
+            {
+                return new DESAlgorithmNew().DecodePwd(password, GameEnvironment.Setting.ClientDesDeKey);
+            }
+            catch (Exception ex)
+            {
+                TraceLog.WriteError("Decode password:\"{0}\" error:{1}", password, ex);
+            }
+            return password;
+        }
+
     }
 }

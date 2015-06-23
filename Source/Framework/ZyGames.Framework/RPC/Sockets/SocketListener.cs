@@ -22,9 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Scripting;
+using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Log;
 using NLog;
 
@@ -33,7 +38,7 @@ namespace ZyGames.Framework.RPC.Sockets
     /// <summary>
     /// Socket listener.
     /// </summary>
-    public class SocketListener
+    public class SocketListener : ISocket
     {
         #region 事件
         /// <summary>
@@ -45,6 +50,17 @@ namespace ZyGames.Framework.RPC.Sockets
             if (Connected != null)
             {
                 Connected(this, e);
+            }
+        }
+        /// <summary>
+        /// 握手事件
+        /// </summary>
+        public event ConnectionEventHandler Handshaked;
+        private void OnHandshaked(ConnectionEventArgs e)
+        {
+            if (Handshaked != null)
+            {
+                Handshaked(this, e);
             }
         }
         /// <summary>
@@ -69,68 +85,82 @@ namespace ZyGames.Framework.RPC.Sockets
                 DataReceived(this, e);
             }
         }
+        /// <summary>
+        /// 
+        /// </summary>
+        public event ConnectionEventHandler OnPing;
+
+        private void DoPing(ConnectionEventArgs e)
+        {
+            ConnectionEventHandler handler = OnPing;
+            if (handler != null) handler(this, e);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public event ConnectionEventHandler OnPong;
+
+        private void DoPong(ConnectionEventArgs e)
+        {
+            ConnectionEventHandler handler = OnPong;
+            if (handler != null) handler(this, e);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public event Action<ExSocket, int> OnClosedStatus;
+
+        private void DoClosedStatus(ExSocket socket, int statusCode)
+        {
+            Action<ExSocket, int> handler = OnClosedStatus;
+            if (handler != null) handler(socket, statusCode);
+        }
+
         #endregion
 
-        Logger logger = LogManager.GetLogger("SocketListener");
-        BufferManager bufferManager;
-        Socket listenSocket;
-        HashSet<ExSocket> clientSockets = new HashSet<ExSocket>();
-        Semaphore maxConnectionsEnforcer;
-        SocketSettings socketSettings;
-        PrefixHandler prefixHandler;
-        MessageHandler messageHandler;
-        ThreadSafeStack<SocketAsyncEventArgs> acceptEventArgsPool;
-        ThreadSafeStack<SocketAsyncEventArgs> ioEventArgsPool;
-        Timer expireTimer;
+        private Logger logger = LogManager.GetLogger("SocketListener");
+        private BufferManager bufferManager;
+        private Socket listenSocket;
+        private Semaphore maxConnectionsEnforcer;
+        private SocketSettings socketSettings;
         /// <summary>
-        /// Gets the connections.
+        /// 
         /// </summary>
-        /// <value>The connections.</value>
-        public int Connections
-        {
-            get { return clientSockets.Count; }
-        }
+        protected RequestHandler requestHandler;
+        private ThreadSafeStack<SocketAsyncEventArgs> acceptEventArgsPool;
+        private ThreadSafeStack<SocketAsyncEventArgs> ioEventArgsPool;
+        //Timer expireTimer;
+        private bool _isStart;
+
         /// <summary>
-        /// Initializes a new instance of the <see cref="ZyGames.Framework.RPC.Sockets.SocketListener"/> class.
+        /// 
+        /// </summary>
+        /// <param name="socketSettings"></param>
+        public SocketListener(SocketSettings socketSettings)
+            : this(socketSettings, new RequestHandler(new MessageHandler()))
+        {
+
+        }
+
+        /// <summary>
+        /// Initializes a new instance
         /// </summary>
         /// <param name="socketSettings">Socket settings.</param>
-        public SocketListener(SocketSettings socketSettings)
+        /// <param name="requestHandler"></param>
+        public SocketListener(SocketSettings socketSettings, RequestHandler requestHandler)
         {
             this.socketSettings = socketSettings;
-            this.prefixHandler = new PrefixHandler();
-            this.messageHandler = new MessageHandler();
-
+            this.requestHandler = requestHandler;
             this.bufferManager = new BufferManager(this.socketSettings.BufferSize * this.socketSettings.NumOfSaeaForRecSend, this.socketSettings.BufferSize);
 
             this.ioEventArgsPool = new ThreadSafeStack<SocketAsyncEventArgs>(socketSettings.NumOfSaeaForRecSend);
             this.acceptEventArgsPool = new ThreadSafeStack<SocketAsyncEventArgs>(socketSettings.MaxAcceptOps);
             this.maxConnectionsEnforcer = new Semaphore(this.socketSettings.MaxConnections, this.socketSettings.MaxConnections);
             Init();
-            expireTimer = new Timer(CheckExpire, null, socketSettings.ExpireInterval, socketSettings.ExpireInterval);
         }
 
-        private void CheckExpire(object state)
-        {
-            try
-            {
-                lock (clientSockets)
-                {
-                    var now = DateTime.Now;
-                    foreach (var socket in clientSockets)
-                    {
-                        if (now.Subtract(socket.LastAccessTime).TotalMilliseconds > socketSettings.ExpireTime)
-                        {
-                            socket.WorkSocket.Close();
-                        }
-                    }
-                    //logger.InfoFormat("客户端连接数：{0}", clientSockets.Count);
-                }
-            }
-            catch (Exception er)
-            {
-                TraceLog.WriteError("Socket listenner CheckExpire:{0}", er);
-            }
-        }
 
         private void Init()
         {
@@ -154,13 +184,13 @@ namespace ZyGames.Framework.RPC.Sockets
             }
         }
 
-        private void AddClient(ExSocket socket)
-        {
-            lock (clientSockets)
-            {
-                clientSockets.Add(socket);
-            }
-        }
+        //private void AddClient(ExSocket socket)
+        //{
+        //    lock (clientSockets)
+        //    {
+        //        clientSockets.Add(socket);
+        //    }
+        //}
 
         private SocketAsyncEventArgs CreateAcceptEventArgs()
         {
@@ -177,33 +207,30 @@ namespace ZyGames.Framework.RPC.Sockets
             listenSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             listenSocket.Bind(this.socketSettings.LocalEndPoint);
             listenSocket.Listen(socketSettings.Backlog);
+            _isStart = true;
+            requestHandler.Bind(this);
             PostAccept();
         }
 
         private void PostAccept()
         {
-            SocketAsyncEventArgs acceptEventArgs;
-            if (this.acceptEventArgsPool.Count > 1)
+            try
             {
-                try
+                if (!_isStart)
                 {
-                    acceptEventArgs = this.acceptEventArgsPool.Pop();
+                    return;
                 }
-                catch
+                this.maxConnectionsEnforcer.WaitOne();
+                SocketAsyncEventArgs acceptEventArgs = acceptEventArgsPool.Pop() ?? CreateAcceptEventArgs();
+                bool willRaiseEvent = listenSocket.AcceptAsync(acceptEventArgs);
+                if (!willRaiseEvent)
                 {
-                    acceptEventArgs = CreateAcceptEventArgs();
+                    ProcessAccept(acceptEventArgs);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                acceptEventArgs = CreateAcceptEventArgs();
-            }
-
-            this.maxConnectionsEnforcer.WaitOne();
-            bool willRaiseEvent = listenSocket.AcceptAsync(acceptEventArgs);
-            if (!willRaiseEvent)
-            {
-                ProcessAccept(acceptEventArgs);
+                TraceLog.WriteError("Post accept listen error:{0}", ex);
             }
         }
 
@@ -229,9 +256,9 @@ namespace ZyGames.Framework.RPC.Sockets
 
         private void IO_Completed(object sender, SocketAsyncEventArgs ioEventArgs)
         {
+            DataToken ioDataToken = (DataToken)ioEventArgs.UserToken;
             try
             {
-                DataToken ioDataToken = (DataToken)ioEventArgs.UserToken;
                 ioDataToken.Socket.LastAccessTime = DateTime.Now;
                 switch (ioEventArgs.LastOperation)
                 {
@@ -248,53 +275,63 @@ namespace ZyGames.Framework.RPC.Sockets
             }
             catch (ObjectDisposedException)
             {
+                //modify disposed error ignore log
+                //logger.Error(string.Format("IO_Completed error:{0}", error));
                 ReleaseIOEventArgs(ioEventArgs);
             }
             catch (Exception ex)
             {
-                logger.Error("IO_Completed", ex);
+                logger.Error(string.Format("IP {0} IO_Completed unkown error:{1}", (ioDataToken != null && ioDataToken.Socket != null ? ioDataToken.Socket.RemoteEndPoint.ToNotNullString() : ""), ex));
             }
         }
 
         private void ProcessAccept(SocketAsyncEventArgs acceptEventArgs)
         {
-            PostAccept();
-
-            if (acceptEventArgs.SocketError != SocketError.Success)
-            {
-                HandleBadAccept(acceptEventArgs);
-                return;
-            }
-
-            SocketAsyncEventArgs ioEventArgs = this.ioEventArgsPool.Pop();
-            ioEventArgs.AcceptSocket = acceptEventArgs.AcceptSocket;
-            acceptEventArgs.AcceptSocket = null;
-            this.acceptEventArgsPool.Push(acceptEventArgs);
-            var dataToken = (DataToken)ioEventArgs.UserToken;
-            ioEventArgs.SetBuffer(dataToken.bufferOffset, socketSettings.BufferSize);
-            var exSocket = new ExSocket(ioEventArgs.AcceptSocket);
-            exSocket.LastAccessTime = DateTime.Now;
-            dataToken.Socket = exSocket;
-
-            AddClient(exSocket);
-
             try
             {
-                OnConnected(new ConnectionEventArgs { Socket = exSocket });
-            }
-            catch (Exception ex)
-            {
-                TraceLog.WriteError("OnConnected error:{0}", ex);
-            }
+                if (acceptEventArgs.SocketError != SocketError.Success)
+                {
+                    HandleBadAccept(acceptEventArgs);
+                }
+                else
+                {
+                    SocketAsyncEventArgs ioEventArgs = this.ioEventArgsPool.Pop();
+                    ioEventArgs.AcceptSocket = acceptEventArgs.AcceptSocket;
+                    var dataToken = (DataToken)ioEventArgs.UserToken;
+                    ioEventArgs.SetBuffer(dataToken.bufferOffset, socketSettings.BufferSize);
+                    var exSocket = new ExSocket(ioEventArgs.AcceptSocket);
+                    exSocket.LastAccessTime = DateTime.Now;
+                    dataToken.Socket = exSocket;
+                    acceptEventArgs.AcceptSocket = null;
+                    this.acceptEventArgsPool.Push(acceptEventArgs);
+                    try
+                    {
+                        OnConnected(new ConnectionEventArgs { Socket = exSocket });
+                    }
+                    catch (Exception ex)
+                    {
+                        TraceLog.WriteError("OnConnected error:{0}", ex);
+                    }
+                    PostReceive(ioEventArgs);
+                }
 
-            PostReceive(ioEventArgs);
+            }
+            finally
+            {
+                PostAccept();
+            }
         }
 
         private void ReleaseIOEventArgs(SocketAsyncEventArgs ioEventArgs)
         {
+            if (ioEventArgs == null) return;
+
             var dataToken = (DataToken)ioEventArgs.UserToken;
-            dataToken.Reset(true);
-            dataToken.Socket = null;
+            if (dataToken != null)
+            {
+                dataToken.Reset(true);
+                dataToken.Socket = null;
+            }
             ioEventArgs.AcceptSocket = null;
             ioEventArgsPool.Push(ioEventArgs);
         }
@@ -319,81 +356,74 @@ namespace ZyGames.Framework.RPC.Sockets
         private void ProcessReceive(SocketAsyncEventArgs ioEventArgs)
         {
             DataToken dataToken = (DataToken)ioEventArgs.UserToken;
-            if (ioEventArgs.SocketError != SocketError.Success)
-            {
-                //Socket错误
-                //if (logger.IsDebugEnabled) logger.Debug("ProcessReceive:{0}", ioEventArgs.SocketError);
-                HandleCloseSocket(ioEventArgs);
-                return;
-            }
-
             if (ioEventArgs.BytesTransferred == 0)
             {
                 //对方主动关闭socket
                 //if (logger.IsDebugEnabled) logger.Debug("对方关闭Socket");
-                HandleCloseSocket(ioEventArgs);
+                Closing(ioEventArgs, OpCode.Empty);
                 return;
             }
 
-            var exSocket = dataToken.Socket;
-
-            #region 数据解析
-            List<byte[]> msgs = new List<byte[]>();
-            int remainingBytesToProcess = ioEventArgs.BytesTransferred;
-            bool needPostAnother = true;
-            do
+            if (ioEventArgs.SocketError != SocketError.Success)
             {
-                if (dataToken.prefixBytesDone < 4)
-                {
-                    remainingBytesToProcess = prefixHandler.HandlePrefix(ioEventArgs, dataToken, remainingBytesToProcess);
-                    if (dataToken.prefixBytesDone == 4 && (dataToken.messageLength > 10 * 1024 * 1024 || dataToken.messageLength <= 0))
-                    {
-                        //消息头已接收完毕，并且接收到的消息长度大于10M，socket传输的数据已紊乱，关闭掉
-                        logger.Warn("接收到的消息长度错误:{0}", dataToken.messageLength);
-                        needPostAnother = false;
-                        HandleCloseSocket(ioEventArgs);
-                        break;
-                    }
-                    //if (logger.IsDebugEnabled) logger.Debug("处理消息头，消息长度[{0}]，剩余字节[{1}]", dataToken.messageLength, remainingBytesToProcess);
-                    if (remainingBytesToProcess == 0) break;
-                }
-
-                remainingBytesToProcess = messageHandler.HandleMessage(ioEventArgs, dataToken, remainingBytesToProcess);
-
-                if (dataToken.IsMessageReady)
-                {
-                    //if (logger.IsDebugEnabled) logger.Debug("完整封包 长度[{0}],总传输[{1}],剩余[{2}]", dataToken.messageLength, ioEventArgs.BytesTransferred, remainingBytesToProcess);
-                    msgs.Add(dataToken.byteArrayForMessage);
-                    if (remainingBytesToProcess != 0)
-                    {
-                        //if (logger.IsDebugEnabled) logger.Debug("重置缓冲区,buffskip指针[{0}]。", dataToken.bufferSkip);
-                        dataToken.Reset(false);
-                    }
-                }
-                else
-                {
-                    //if (logger.IsDebugEnabled) logger.Debug("不完整封包 长度[{0}],总传输[{1}],已接收[{2}]", dataToken.messageLength, ioEventArgs.BytesTransferred, dataToken.messageBytesDone);
-                }
-            } while (remainingBytesToProcess != 0);
-            #endregion
-
-            if (needPostAnother)
+                //Socket错误
+                logger.Debug("IP {0} ProcessReceive:{1}", (dataToken != null ? dataToken.Socket.RemoteEndPoint.ToNotNullString() : ""), ioEventArgs.SocketError);
+                Closing(ioEventArgs);
+                return;
+            }
+            ExSocket exSocket = dataToken == null ? null : dataToken.Socket;
+            List<DataMeaage> messages;
+            bool hasHandshaked;
+            bool needPostAnother = requestHandler.TryReceiveMessage(ioEventArgs, out messages, out hasHandshaked);
+            if (hasHandshaked)
             {
-                if (dataToken.prefixBytesDone == 4 && dataToken.IsMessageReady)
-                    dataToken.Reset(true);
-                dataToken.bufferSkip = 0;
-                PostReceive(ioEventArgs);
+                OnHandshaked(new ConnectionEventArgs { Socket = exSocket });
             }
 
-            foreach (var m in msgs)
+            //modify reason:数据包接收事件触发乱序
+            if (messages != null)
             {
-                try
+                foreach (var message in messages)
                 {
-                    OnDataReceived(new ConnectionEventArgs { Socket = exSocket, Data = m });
+                    try
+                    {
+                        switch (message.OpCode)
+                        {
+                            case OpCode.Close:
+                                var statusCode = requestHandler.MessageProcessor != null
+                                    ? requestHandler.MessageProcessor.GetCloseStatus(message.Data)
+                                    : OpCode.Empty;
+                                if (statusCode != OpCode.Empty)
+                                {
+                                    DoClosedStatus(exSocket, statusCode);
+                                }
+                                Closing(ioEventArgs, OpCode.Empty);
+                                needPostAnother = false;
+                                break;
+                            case OpCode.Ping:
+                                DoPing(new ConnectionEventArgs { Socket = exSocket, Meaage = message });
+                                break;
+                            case OpCode.Pong:
+                                DoPong(new ConnectionEventArgs { Socket = exSocket, Meaage = message });
+                                break;
+                            default:
+                                OnDataReceived(new ConnectionEventArgs { Socket = exSocket, Meaage = message });
+                                break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        TraceLog.WriteError("OnDataReceived error:{0}", ex);
+                    }
                 }
-                catch (Exception ex)
+            }
+            if (needPostAnother)
+            {
+                PostReceive(ioEventArgs);
+                //是否需要关闭连接
+                if (exSocket.IsClosed)
                 {
-                    TraceLog.WriteError("OnDataReceived error:{0}", ex);
+                    ResetSAEAObject(ioEventArgs);
                 }
             }
         }
@@ -401,8 +431,8 @@ namespace ZyGames.Framework.RPC.Sockets
         private void TryDequeueAndPostSend(ExSocket socket, SocketAsyncEventArgs ioEventArgs)
         {
             bool isOwner = ioEventArgs == null;
-            byte[] data;
-            if (socket.TryDequeue(out data))
+            SocketAsyncResult result;
+            if (socket.TryDequeue(out result))
             {
                 if (ioEventArgs == null)
                 {
@@ -411,17 +441,19 @@ namespace ZyGames.Framework.RPC.Sockets
                 }
                 DataToken dataToken = (DataToken)ioEventArgs.UserToken;
                 dataToken.Socket = socket;
-                dataToken.byteArrayForMessage = data;
-                dataToken.messageLength = data.Length;
+                dataToken.AsyncResult = result;
+                dataToken.byteArrayForMessage = result.Data;
+                dataToken.messageLength = result.Data.Length;
                 try
                 {
                     PostSend(ioEventArgs);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    dataToken.ResultCallback(ResultCode.Error, ex);
                     if (isOwner)
                         ReleaseIOEventArgs(ioEventArgs);
-                    throw;
+                    socket.ResetSendFlag();
                 }
             }
             else
@@ -430,31 +462,102 @@ namespace ZyGames.Framework.RPC.Sockets
                 socket.ResetSendFlag();
             }
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="socket"></param>
+        /// <param name="data"></param>
+        /// <param name="offset"></param>
+        /// <param name="count"></param>
+        public override async Task PostSend(ExSocket socket, byte[] data, int offset, int count)
+        {
+            await PostSend(socket, OpCode.Binary, data, offset, count);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="socket"></param>
+        /// <param name="opCode"></param>
+        /// <param name="data"></param>
+        /// <param name="offset"></param>
+        /// <param name="count"></param>
+        public override async Task PostSend(ExSocket socket, sbyte opCode, byte[] data, int offset, int count)
+        {
+            await PostSend(socket, opCode, data, offset, count, result => { });
+        }
+
         /// <summary>
         /// Posts the send.
         /// </summary>
         /// <param name="socket">Socket.</param>
+        /// <param name="opCode"></param>
         /// <param name="data">Data.</param>
         /// <param name="offset">Offset.</param>
         /// <param name="count">Count.</param>
-        public void PostSend(ExSocket socket, byte[] data, int offset, int count)
+        /// <param name="callback"></param>
+        public override async Task PostSend(ExSocket socket, sbyte opCode, byte[] data, int offset, int count, Action<SocketAsyncResult> callback)
         {
-            byte[] buffer = new byte[count + 4];
-            Buffer.BlockCopy(BitConverter.GetBytes(count), 0, buffer, 0, 4);
-            Buffer.BlockCopy(data, offset, buffer, 4, count);
-            socket.Enqueue(buffer);
-            if (socket.TrySetSendFlag())
+            byte[] buffer = requestHandler.MessageProcessor.BuildMessagePack(socket, opCode, data, offset, count);
+            await SendAsync(socket, buffer, callback);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="socket"></param>
+        public override void Ping(ExSocket socket)
+        {
+            byte[] data = Encoding.UTF8.GetBytes("ping");
+            PostSend(socket, OpCode.Ping, data, 0, data.Length).Wait();
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="socket"></param>
+        public override void Pong(ExSocket socket)
+        {
+            byte[] data = Encoding.UTF8.GetBytes("pong");
+            PostSend(socket, OpCode.Pong, data, 0, data.Length).Wait();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="socket"></param>
+        /// <param name="reason"></param>
+        public override void CloseHandshake(ExSocket socket, string reason)
+        {
+            requestHandler.SendCloseHandshake(socket, OpCode.Close, reason);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="socket"></param>
+        /// <param name="buffer"></param>
+        /// <param name="callback"></param>
+        internal protected override async Task<bool> SendAsync(ExSocket socket, byte[] buffer, Action<SocketAsyncResult> callback)
+        {
+            socket.Enqueue(buffer, callback);
+            return await Task.Run(() =>
             {
-                try
+                if (socket.TrySetSendFlag())
                 {
-                    TryDequeueAndPostSend(socket, null);
+                    try
+                    {
+                        TryDequeueAndPostSend(socket, null);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        socket.ResetSendFlag();
+                        TraceLog.WriteError("SendAsync {0} error:{1}", socket.RemoteEndPoint, ex);
+                    }
                 }
-                catch
-                {
-                    socket.ResetSendFlag();
-                    throw;
-                }
-            }
+                return false;
+            });
         }
 
         private void PostSend(SocketAsyncEventArgs ioEventArgs)
@@ -490,6 +593,7 @@ namespace ZyGames.Framework.RPC.Sockets
                 }
                 else
                 {
+                    dataToken.ResultCallback(ResultCode.Success);
                     dataToken.Reset(true);
                     try
                     {
@@ -504,18 +608,40 @@ namespace ZyGames.Framework.RPC.Sockets
             }
             else
             {
+                dataToken.ResultCallback(ResultCode.Close);
                 dataToken.Socket.ResetSendFlag();
-                HandleCloseSocket(ioEventArgs);
+                Closing(ioEventArgs);
             }
         }
 
-        private void HandleCloseSocket(SocketAsyncEventArgs ioEventArgs)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="ioEventArgs"></param>
+        /// <param name="opCode"></param>
+        /// <param name="reason"></param>
+        internal protected override void Closing(SocketAsyncEventArgs ioEventArgs, sbyte opCode = OpCode.Close, string reason = "")
         {
-            bool needClose;
+            bool needClose = true;
             var dataToken = (DataToken)ioEventArgs.UserToken;
-            lock (clientSockets)
+            //lock (clientSockets)
+            //{
+            //    needClose = clientSockets.Remove(dataToken.Socket);
+            //}
+            try
             {
-                needClose = clientSockets.Remove(dataToken.Socket);
+                if (opCode != OpCode.Empty)
+                {
+                    CloseHandshake(dataToken.Socket, reason);
+                }
+                if (ioEventArgs.AcceptSocket != null)
+                {
+                    ioEventArgs.AcceptSocket.Shutdown(SocketShutdown.Both);
+                }
+            }
+            catch (Exception)
+            {
+                needClose = false;
             }
 
             if (needClose)
@@ -538,41 +664,20 @@ namespace ZyGames.Framework.RPC.Sockets
         private void HandleBadAccept(SocketAsyncEventArgs acceptEventArgs)
         {
             ResetSAEAObject(acceptEventArgs);
+            acceptEventArgs.AcceptSocket = null;
             acceptEventArgsPool.Push(acceptEventArgs);
             maxConnectionsEnforcer.Release();
         }
 
-        /// <summary>
-        /// Closes the socket.
-        /// </summary>
-        /// <param name="socket">Socket.</param>
-        public void CloseSocket(ExSocket socket)
-        {
-            try
-            {
-                socket.WorkSocket.Shutdown(SocketShutdown.Both);
-            }
-            catch { }
-            socket.WorkSocket.Close();
-        }
 
         /// <summary>
         /// Close this instance.
         /// </summary>
-        public void Close()
+        public void Dispose()
         {
-            listenSocket.Close();
-
-            lock (clientSockets)
-            {
-                foreach (var socket in clientSockets)
-                {
-                    socket.WorkSocket.Shutdown(SocketShutdown.Both);
-                }
-            }
-
-            while (clientSockets.Count != 0) Thread.Sleep(10);
+            _isStart = false;
             DisposeAllSaeaObjects();
+            listenSocket.Close();
         }
 
         private void DisposeAllSaeaObjects()
@@ -594,7 +699,10 @@ namespace ZyGames.Framework.RPC.Sockets
         {
             try
             {
-                eventArgs.AcceptSocket.Close();
+                if (eventArgs.AcceptSocket != null)
+                {
+                    eventArgs.AcceptSocket.Close();
+                }
             }
             catch (Exception)
             {

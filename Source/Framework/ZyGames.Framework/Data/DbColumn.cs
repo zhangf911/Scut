@@ -47,6 +47,10 @@ namespace ZyGames.Framework.Data
         /// </summary>
         public bool IsKey { get; set; }
         /// <summary>
+        /// 
+        /// </summary>
+        public bool IsUnique { get; set; }
+        /// <summary>
         /// 名称
         /// </summary>
         public string Name { get; set; }
@@ -76,6 +80,12 @@ namespace ZyGames.Framework.Data
 		/// </summary>
 		/// <value><c>true</c> if this instance is identity; otherwise, <c>false</c>.</value>
 		public bool IsIdentity{ get; set; }
+
+
+        /// <summary>
+        /// 自增开始编号
+        /// </summary>
+        public int IdentityNo { get; set; }
 
         /// <summary>
         /// Db映射类型

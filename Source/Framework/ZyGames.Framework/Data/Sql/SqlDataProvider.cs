@@ -27,6 +27,7 @@ using System.Data;
 using System.Data.SqlClient;
 using System.Text;
 using ZyGames.Framework.Common;
+using ZyGames.Framework.Common.Log;
 
 namespace ZyGames.Framework.Data.Sql
 {
@@ -43,6 +44,33 @@ namespace ZyGames.Framework.Data.Sql
             : base(connectionSetting)
         {
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public override void ClearAllPools()
+        {
+            try
+            {
+                SqlConnection.ClearAllPools();
+            }
+            catch (Exception e)
+            {
+                TraceLog.WriteSqlError("ClearAllPools error:{0}", e);
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public override void CheckConnect()
+        {
+            using (SqlConnection conn = new SqlConnection(ConnectionString))
+            {
+                conn.Open();
+            }
+        }
+
         /// <summary>
         /// 
         /// </summary>
@@ -162,6 +190,8 @@ namespace ZyGames.Framework.Data.Sql
         {
             switch (toEnum)
             {
+                case SqlDbType.UniqueIdentifier:
+                    return typeof(Guid);
                 case SqlDbType.BigInt:
                     return typeof(Int64);
                 case SqlDbType.Binary:
@@ -174,8 +204,10 @@ namespace ZyGames.Framework.Data.Sql
                     return typeof(DateTime);
                 case SqlDbType.Decimal:
                     return typeof(Decimal);
-                case SqlDbType.Float:
+                case SqlDbType.Real:
                     return typeof(Double);
+                case SqlDbType.Float:
+                    return typeof(Single);
                 case SqlDbType.Image:
                     return typeof(Object);
                 case SqlDbType.Int:
@@ -188,8 +220,6 @@ namespace ZyGames.Framework.Data.Sql
                     return typeof(String);
                 case SqlDbType.NVarChar:
                     return typeof(String);
-                case SqlDbType.Real:
-                    return typeof(Single);
                 case SqlDbType.SmallDateTime:
                     return typeof(DateTime);
                 case SqlDbType.SmallInt:
@@ -204,8 +234,6 @@ namespace ZyGames.Framework.Data.Sql
                     return typeof(Byte);
                 case SqlDbType.Udt://自定义的数据类型
                     return typeof(Object);
-                case SqlDbType.UniqueIdentifier:
-                    return typeof(Guid);
                 case SqlDbType.VarBinary:
                     return typeof(Object);
                 case SqlDbType.VarChar:
@@ -225,6 +253,9 @@ namespace ZyGames.Framework.Data.Sql
 
             switch (sqlDbType)
             {
+                case "uniqueidentifier":
+                    dbType = SqlDbType.UniqueIdentifier;
+                    break;
                 case "int":
                     dbType = SqlDbType.Int;
                     break;
@@ -237,8 +268,13 @@ namespace ZyGames.Framework.Data.Sql
                 case "datetime":
                     dbType = SqlDbType.DateTime;
                     break;
+                case "numeric":
                 case "decimal":
                     dbType = SqlDbType.Decimal;
+                    break;
+                case "double":
+                case "real":
+                    dbType = SqlDbType.Real;
                     break;
                 case "float":
                     dbType = SqlDbType.Float;
@@ -248,6 +284,9 @@ namespace ZyGames.Framework.Data.Sql
                     break;
                 case "money":
                     dbType = SqlDbType.Money;
+                    break;
+                case "smallmoney":
+                    dbType = SqlDbType.SmallMoney;
                     break;
                 case "ntext":
                     dbType = SqlDbType.NText;
@@ -276,15 +315,6 @@ namespace ZyGames.Framework.Data.Sql
                 case "nchar":
                     dbType = SqlDbType.NChar;
                     break;
-                case "numeric":
-                    dbType = SqlDbType.Decimal;
-                    break;
-                case "real":
-                    dbType = SqlDbType.Real;
-                    break;
-                case "smallmoney":
-                    dbType = SqlDbType.SmallMoney;
-                    break;
                 case "sql_variant":
                     dbType = SqlDbType.Variant;
                     break;
@@ -293,9 +323,6 @@ namespace ZyGames.Framework.Data.Sql
                     break;
                 case "tinyint":
                     dbType = SqlDbType.TinyInt;
-                    break;
-                case "uniqueidentifier":
-                    dbType = SqlDbType.UniqueIdentifier;
                     break;
                 case "varbinary":
                     dbType = SqlDbType.VarBinary;
@@ -309,7 +336,21 @@ namespace ZyGames.Framework.Data.Sql
 
         private string ConvertToDbType(Type type, string dbType, long length, int scale, bool isKey)
         {
-            if (type.Equals(typeof(Int64)))
+            if (string.Equals(dbType, "text", StringComparison.CurrentCultureIgnoreCase) ||
+                string.Equals(dbType, "longtext", StringComparison.CurrentCultureIgnoreCase))
+            {
+                return "text";
+            }
+            if (string.Equals(dbType, "blob", StringComparison.CurrentCultureIgnoreCase))
+            {
+                return "varbinary(max)";
+            }
+            if (string.Equals(dbType, "longblob", StringComparison.CurrentCultureIgnoreCase))
+            {
+                return "image";
+            }
+
+            if (type.Equals(typeof(Int64)) || type.Equals(typeof(UInt64)))
             {
                 return "BigInt";
             }
@@ -327,17 +368,17 @@ namespace ZyGames.Framework.Data.Sql
             }
             if (type.Equals(typeof(Double)))
             {
-                return "Float";
-            }
-            if (type.IsEnum || type.Equals(typeof(Int32)))
-            {
-                return "Int";
+                return "Real";
             }
             if (type.Equals(typeof(Single)))
             {
-                return "Real";
+                return "Float";
             }
-            if (type.Equals(typeof(Int16)))
+            if (type.IsEnum || type.Equals(typeof(Int32)) || type.Equals(typeof(UInt32)))
+            {
+                return "Int";
+            }
+            if (type.Equals(typeof(Int16)) || type.Equals(typeof(UInt16)))
             {
                 return "SmallInt";
             }
@@ -367,10 +408,6 @@ namespace ZyGames.Framework.Data.Sql
                     : "VarChar(255)";
             }
 
-            if (string.Equals(dbType, "text", StringComparison.CurrentCultureIgnoreCase))
-            {
-                return dbType;
-            }
 
             return "sql_variant";
         }
@@ -389,11 +426,17 @@ namespace ZyGames.Framework.Data.Sql
                 command.AppendFormat("Create Table {0}", FormatName(tableName));
                 command.AppendLine("(");
                 List<string> keys;
-                bool hasColumn = CheckProcessColumns(command, columns, out keys);
+                List<string> uniques;
+                bool hasColumn = CheckProcessColumns(command, columns, out keys, out uniques);
                 if (keys.Count > 0)
                 {
                     command.AppendLine(",");
                     command.AppendFormat("constraint PK_{0} primary key({1})", tableName, FormatQueryColumn(",", keys));
+                }
+                if (uniques.Count > 0)
+                {
+                    command.AppendLine(",");
+                    command.AppendFormat("constraint UQ_{0} unique({1})", tableName, FormatQueryColumn(",", uniques));
                 }
                 command.AppendLine("");
                 command.AppendLine(")");
@@ -408,9 +451,41 @@ namespace ZyGames.Framework.Data.Sql
             }
         }
 
-        private bool CheckProcessColumns(StringBuilder command, DbColumn[] columns, out List<string> keys, bool isModify = false)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="indexs"></param>
+        public override void CreateIndexs(string tableName, string[] indexs)
+        {
+            StringBuilder command = new StringBuilder();
+            try
+            {
+                foreach (var item in indexs)
+                {
+                    string[] columns = item.Split(',');
+                    if (command.Length > 0)
+                        command.AppendLine("");
+
+                    command.AppendFormat("CREATE INDEX INDEX_{1} ON {0} ({2});",
+                        FormatName(tableName),
+                        string.Join("_", columns),
+                        FormatQueryColumn(",", columns)
+                        );
+                }
+                SqlHelper.ExecuteNonQuery(ConnectionString, CommandType.Text, command.ToString());
+
+            }
+            catch (Exception ex)
+            {
+                throw new Exception(string.Format("Execute sql error:{0}", command), ex);
+            }
+        }
+
+        private bool CheckProcessColumns(StringBuilder command, DbColumn[] columns, out List<string> keys, out List<string> uniques, bool isModify = false)
         {
             keys = new List<string>();
+            uniques = new List<string>();
             int index = 0;
             foreach (var dbColumn in columns)
             {
@@ -426,11 +501,15 @@ namespace ZyGames.Framework.Data.Sql
                 {
                     keys.Add(FormatName(dbColumn.Name));
                 }
+                if (dbColumn.IsUnique)
+                {
+                    uniques.Add(FormatName(dbColumn.Name));
+                }
                 command.AppendFormat("    {0} {1}{2}{3}",
                                      FormatName(dbColumn.Name),
                                      ConvertToDbType(dbColumn.Type, dbColumn.DbType, dbColumn.Length, dbColumn.Scale, dbColumn.IsKey),
-                                     (dbColumn.Isnullable ? "" : " not null"),
-                                     (dbColumn.IsIdentity ? " IDENTITY(1,1)" : ""));
+                                     (dbColumn.Isnullable ? "" : " NOT NULL"),
+                                     (dbColumn.IsIdentity ? dbColumn.IdentityNo > 0 ? string.Format(" IDENTITY({0},1)", dbColumn.IdentityNo) : " IDENTITY(1,1)" : ""));
                 index++;
             }
 
@@ -449,10 +528,12 @@ namespace ZyGames.Framework.Data.Sql
             StringBuilder command = new StringBuilder();
             try
             {
-                command.AppendFormat("Alter Table {0}", FormatName(tableName));
+                string dbTableName = FormatName(tableName);
+                command.AppendFormat("Alter Table {0}", dbTableName);
                 command.AppendLine(" Add");
                 List<string> keys;
-                bool hasColumn = CheckProcessColumns(command, columns, out keys);
+                List<string> uniques;
+                bool hasColumn = CheckProcessColumns(command, columns, out keys, out uniques);
                 command.Append(";");
                 if (hasColumn)
                 {
@@ -478,32 +559,32 @@ namespace ZyGames.Framework.Data.Sql
                         command.AppendLine("");
                     }
                     command.AppendFormat("Alter Table {0} ALTER COLUMN {1} {2}{3}{4};",
-                                         FormatName(tableName),
+                                         dbTableName,
                                          FormatName(dbColumn.Name),
                                          ConvertToDbType(dbColumn.Type, dbColumn.DbType, dbColumn.Length, dbColumn.Scale, dbColumn.IsKey),
                                          dbColumn.Isnullable ? "" : " not null",
-                                         (dbColumn.IsIdentity ? " IDENTITY(1,1)" : ""));
+                                         (dbColumn.IsIdentity ? dbColumn.IdentityNo > 0 ? string.Format(" IDENTITY({0},1)", dbColumn.IdentityNo) : " IDENTITY(1,1)" : ""));
                     index++;
                 }
                 if (keyColumns.Count > 0)
                 {
                     string[] keyArray = new string[keyColumns.Count];
-                    command.AppendFormat("ALTER TABLE {0} DROP CONSTRAINT PK_{1};", FormatName(tableName), tableName);
+                    command.AppendFormat("ALTER TABLE {0} DROP CONSTRAINT PK_{1};", dbTableName, tableName);
                     command.AppendLine();
                     int i = 0;
                     foreach (var keyColumn in keyColumns)
                     {
                         keyArray[i] = FormatName(keyColumn.Name);
                         command.AppendFormat("Alter Table {0} ALTER COLUMN {1} {2} not null;",
-                                             FormatName(tableName),
+                                             dbTableName,
                                              FormatName(keyColumn.Name),
                                              ConvertToDbType(keyColumn.Type, keyColumn.DbType, keyColumn.Length, keyColumn.Scale, keyColumn.IsKey));
                         command.AppendLine();
                         i++;
                         index++;
                     }
-                    command.AppendFormat("ALTER TABLE {0} ADD CONSTRAINT PK_{1} PRIMARY KEY({2});", 
-                        FormatName(tableName),
+                    command.AppendFormat("ALTER TABLE {0} ADD CONSTRAINT PK_{1} PRIMARY KEY({2});",
+                        dbTableName,
                         tableName,
                         FormatQueryColumn(",", keyArray));
                 }
@@ -557,9 +638,40 @@ namespace ZyGames.Framework.Data.Sql
         /// <param name="paramName"></param>
         /// <param name="value"></param>
         /// <returns></returns>
+        public override IDataParameter CreateParameterByLongText(string paramName, object value)
+        {
+            return SqlParamHelper.MakeInParam(paramName, SqlDbType.Text, 0, value);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="paramName"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
         public override IDataParameter CreateParameterByText(string paramName, object value)
         {
             return SqlParamHelper.MakeInParam(paramName, SqlDbType.Text, 0, value);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="paramName"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public override IDataParameter CreateParameterLongBlob(string paramName, object value)
+        {
+            return SqlParamHelper.MakeInParam(paramName, SqlDbType.Image, 0, value);
+        }
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="paramName"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        public override IDataParameter CreateParameterByBlob(string paramName, object value)
+        {
+            return SqlParamHelper.MakeInParam(paramName, SqlDbType.VarBinary, 0, value);
         }
 
         /// <summary>

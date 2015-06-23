@@ -1,4 +1,4 @@
-/****************************************************************************
+ï»¿/****************************************************************************
 Copyright (c) 2013-2015 scutgame.com
 
 http://www.scutgame.com
@@ -29,11 +29,12 @@ using System.Linq;
 using System.Text;
 using System.Xml;
 using ZyGames.Framework.Common;
+using ZyGames.Framework.Common.Log;
 
 namespace ZyGames.Framework.Game.Configuration
 {
     /// <summary>
-    /// ÓÎÏ·ÅäÖÃÀà
+    /// æ¸¸æˆé…ç½®ç±»
     /// </summary>
     internal class GameConfigSetting
     {
@@ -43,7 +44,7 @@ namespace ZyGames.Framework.Game.Configuration
         private bool _hasSetting;
 
         /// <summary>
-        /// ÊÇ·ñÓĞÅäÖÃÎÄ¼ş
+        /// æ˜¯å¦æœ‰é…ç½®æ–‡ä»¶
         /// </summary>
         public bool HasSetting
         {
@@ -110,9 +111,21 @@ namespace ZyGames.Framework.Game.Configuration
         private void ParseSdkSetting(XmlNode sdkChannel)
         {
             _sdkChannelDict.Clear();
-            foreach (XmlElement childNode in sdkChannel.ChildNodes)
+            foreach (var node in sdkChannel.ChildNodes)
             {
-                ChannelType channelType = MathUtils.ToEnum<ChannelType>(childNode.Name);
+                XmlElement childNode = node as XmlElement;
+                if (childNode == null) continue;
+
+                ChannelType channelType;
+                try
+                {
+                    channelType = MathUtils.ToEnum<ChannelType>(childNode.Name);
+                }
+                catch (Exception)
+                {
+                    TraceLog.WriteError("The SDK config node \"{0}\" is not suport", childNode.Name);
+                    continue;
+                }
                 GameChannel gameChannel = new GameChannel(channelType);
                 string url = childNode.GetAttribute("url");
                 if (!string.IsNullOrEmpty(url))
@@ -171,7 +184,7 @@ namespace ZyGames.Framework.Game.Configuration
         }
 
         /// <summary>
-        /// »ñµÃGMÅäÖÃ½âÎöµÄ¶ÔÏóÀàĞÍ
+        /// è·å¾—GMé…ç½®è§£æçš„å¯¹è±¡ç±»å‹
         /// </summary>
         /// <param name="cmd"></param>
         /// <returns></returns>
@@ -181,7 +194,7 @@ namespace ZyGames.Framework.Game.Configuration
         }
 
         /// <summary>
-        /// »ñµÃÇşµÀµÇÂ¼´¦ÀíÌá¹©ÀàÅäÖÃ
+        /// è·å¾—æ¸ é“ç™»å½•å¤„ç†æä¾›ç±»é…ç½®
         /// </summary>
         /// <param name="retailId"></param>
         /// <returns></returns>
@@ -191,7 +204,7 @@ namespace ZyGames.Framework.Game.Configuration
         }
 
         /// <summary>
-        /// »ñµÃÇşµÀÉÌÌá¹©µÄSdkÅäÖÃ
+        /// è·å¾—æ¸ é“å•†æä¾›çš„Sdké…ç½®
         /// </summary>
         /// <param name="type"></param>
         /// <returns></returns>

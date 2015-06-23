@@ -21,10 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+
 using ZyGames.Framework.Common.Log;
 using ZyGames.Framework.Game.Pay;
 using ZyGames.Framework.Game.Service;
@@ -47,7 +44,7 @@ namespace ZyGames.Framework.Game.Contract.Action
 		/// </summary>
 		/// <param name="aActionId">A action identifier.</param>
 		/// <param name="httpGet">Http get.</param>
-        public Sdk91PayAction(short aActionId, HttpGet httpGet)
+        public Sdk91PayAction(short aActionId, ActionGetter httpGet)
             : base(aActionId, httpGet)
         {
         }

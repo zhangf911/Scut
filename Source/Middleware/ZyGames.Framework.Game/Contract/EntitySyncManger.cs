@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
 Copyright (c) 2013-2015 scutgame.com
 
 http://www.scutgame.com
@@ -23,13 +23,7 @@ THE SOFTWARE.
 ****************************************************************************/
 
 using System;
-using System.Collections;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Reflection;
-using System.Text;
 using System.Threading;
 using ZyGames.Framework.Collection.Generic;
 using ZyGames.Framework.Common;
@@ -162,7 +156,7 @@ namespace ZyGames.Framework.Game.Contract
                     continue;
                 }
                 var recordWriter = new MessageStructure();
-                recordWriter.PushIntoStack(schema.Name);
+                recordWriter.PushIntoStack(schema.EntityName);
                 //write columns
                 var columns = schema.GetColumns();
                 foreach (var column in columns)

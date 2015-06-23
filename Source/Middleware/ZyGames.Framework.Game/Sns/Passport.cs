@@ -22,12 +22,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
+using ServiceStack.Common.Extensions;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Configuration;
 using ZyGames.Framework.Data;
 using ZyGames.Framework.Data.Sql;
+using ZyGames.Framework.Game.Config;
 
 namespace ZyGames.Framework.Game.Sns
 {
@@ -36,7 +39,15 @@ namespace ZyGames.Framework.Game.Sns
     /// </summary>
     public class SnsPassport : IDisposable
     {
-        private static readonly string PreAccount = ConfigUtils.GetSetting("Sns.PreAccount", "Z");
+        private MiddlewareSection section;
+        /// <summary>
+        /// 
+        /// </summary>
+        public SnsPassport()
+        {
+            section = ConfigManager.Configger.GetFirstOrAddConfig<MiddlewareSection>();
+        }
+
         /// <summary>
         /// ID的状态
         /// </summary>
@@ -73,54 +84,61 @@ namespace ZyGames.Framework.Game.Sns
         public string GetRegPassport()
         {
             bool isGet = false;
+            //从未下发和过期1天已分配的账号从取
             var command = ConnectManager.Provider.CreateCommandStruct("SnsPassportLog", CommandMode.Inquiry, "PASSPORTID");
-            command.Top = 1;
+            command.Top = 100;
             command.OrderBy = "PASSPORTID ASC";
             command.Filter = ConnectManager.Provider.CreateCommandFilter();
-            command.Filter.Condition = command.Filter.FormatExpression("MARK");
-            command.Filter.AddParam("MARK", Convert.ToInt32(PassMark.UnPush));
+            command.Filter.Condition = string.Format("{0} AND {1}",
+                command.Filter.FormatExpression("MARK", "<"),
+                command.Filter.FormatExpression("RegPushTime", "<"));
+            command.Filter.AddParam("MARK", Convert.ToInt32(PassMark.IsReg));
+            command.Filter.AddParam("RegPushTime", DateTime.Now.Date.AddDays(-1));
+            command.Parser();
+            var passsportList = new List<string>();
+            string iPassportId = String.Empty;
+            using (var aReader = ConnectManager.Provider.ExecuteReader(CommandType.Text, command.Sql, command.Parameters))
+            {
+                while (aReader.Read())
+                {
+                    isGet = true;
+                    passsportList.Add(aReader["PASSPORTID"].ToString());
+                }
+            }
+            if (isGet)
+            {
+                iPassportId = FormatPassport(passsportList.Count > 1 ? passsportList[RandomUtils.GetRandom(0, passsportList.Count)] : passsportList[0]); //随机取
+
+                if (!SetStat(iPassportId, PassMark.IsPushToNewUser))
+                {
+                    throw new Exception("Update passport state error");
+                }
+                return iPassportId;
+            }
+            //新创建
+            command = ConnectManager.Provider.CreateCommandStruct("SnsPassportLog", CommandMode.Insert);
+            command.ReturnIdentity = true;
+            command.AddParameter("mark", Convert.ToInt32(PassMark.IsPushToNewUser));
+            command.AddParameter("regpushtime", MathUtils.Now);
             command.Parser();
 
-            string iPassportId = String.Empty;
             using (var aReader = ConnectManager.Provider.ExecuteReader(CommandType.Text, command.Sql, command.Parameters))
             {
                 if (aReader.Read())
                 {
-                    isGet = true;
-                    iPassportId = aReader["PASSPORTID"].ToString();
+                    iPassportId = FormatPassport(aReader[0].ToString());
+                    return iPassportId;
                 }
-            }
-
-            if (isGet)
-            {
-                if (!SetStat(iPassportId, PassMark.IsPushToNewUser))
+                else
                 {
-                    throw new Exception("更新状态出现异常");
-                }
-                return iPassportId.ToString();
-            }
-            else
-            {
-                command = ConnectManager.Provider.CreateCommandStruct("SnsPassportLog", CommandMode.Insert);
-                command.ReturnIdentity = true;
-                command.AddParameter("mark", Convert.ToInt32(PassMark.IsPushToNewUser));
-                command.AddParameter("regpushtime", MathUtils.Now);
-                command.Parser();
-
-                using (var aReader = ConnectManager.Provider.ExecuteReader(CommandType.Text, command.Sql, command.Parameters))
-                {
-                    if (aReader.Read())
-                    {
-                        iPassportId = aReader[0].ToString();
-                        return PreAccount + iPassportId.ToString();
-                    }
-                    else
-                    {
-                        throw new Exception();
-                    }
+                    throw new Exception("Generate passport error");
                 }
             }
+        }
 
+        private string FormatPassport(string pid)
+        {
+            return section.PreAccount + pid;
         }
 
         /// <summary>
@@ -132,13 +150,13 @@ namespace ZyGames.Framework.Game.Sns
         {
             try
             {
-                string sPidPre = aPid.Substring(0, PreAccount.Length).ToUpper();
-                if (sPidPre != PreAccount)
+                string sPidPre = aPid.Substring(0, section.PreAccount.Length).ToUpper();
+                if (sPidPre != section.PreAccount)
                 {
                     return false;
                 }
 
-                string sTmp = aPid.Substring(PreAccount.Length);
+                string sTmp = aPid.Substring(section.PreAccount.Length);
                 var command = ConnectManager.Provider.CreateCommandStruct("SnsPassportLog", CommandMode.Inquiry, "passportid");
                 command.Top = 1;
                 command.OrderBy = "PASSPORTID ASC";
@@ -167,7 +185,7 @@ namespace ZyGames.Framework.Game.Sns
         {
             try
             {
-                string sTmp = aPid.Substring(PreAccount.Length);
+                string sTmp = aPid.Substring(section.PreAccount.Length);
                 var command = ConnectManager.Provider.CreateCommandStruct("SnsPassportLog", CommandMode.Modify);
                 command.AddParameter("mark", Convert.ToInt32(aMark));
                 if (aMark == PassMark.IsPushToNewUser)
@@ -182,9 +200,7 @@ namespace ZyGames.Framework.Game.Sns
                 command.Filter.Condition = command.Filter.FormatExpression("PassportId");
                 command.Filter.AddParam("PassportId", sTmp);
                 command.Parser();
-
-                ConnectManager.Provider.ExecuteQuery(CommandType.Text, command.Sql, command.Parameters);
-                return true;
+                return ConnectManager.Provider.ExecuteQuery(CommandType.Text, command.Sql, command.Parameters) > 0;
             }
             catch
             {

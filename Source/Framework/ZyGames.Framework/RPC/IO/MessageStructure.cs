@@ -27,7 +27,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Serialization;
 
@@ -96,11 +95,11 @@ namespace ZyGames.Framework.RPC.IO
         //private int _offset;
         private Encoding _encoding = Encoding.UTF8;
 
-        private int _currRecordPos;
+        private Stack<int> _currRecordPos = new Stack<int>();
         /// <summary>
         /// 当前循环体字节长度
         /// </summary>
-        private int _currRecordSize;
+        private Stack<int> _currRecordSize = new Stack<int>();
 
         /// <summary>
         /// 
@@ -161,7 +160,7 @@ namespace ZyGames.Framework.RPC.IO
         /// </summary>
         public void Reset()
         {
-            _currRecordPos = 0;
+            _currRecordPos.Clear();
             _msBuffers.Position = 0;
         }
 
@@ -232,6 +231,33 @@ namespace ZyGames.Framework.RPC.IO
             return BitConverter.ToInt64(bytes, 0);
         }
         /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public UInt16 ReadUInt16()
+        {
+            byte[] bytes = ReadByte(ShortSize);
+            return BitConverter.ToUInt16(bytes, 0);
+        }
+        /// <summary>
+        /// Read int
+        /// </summary>
+        /// <returns></returns>
+        public UInt32 ReadUInt32()
+        {
+            byte[] bytes = ReadByte(IntSize);
+            return BitConverter.ToUInt32(bytes, 0);
+        }
+        /// <summary>
+        /// Read long
+        /// </summary>
+        /// <returns></returns>
+        public UInt64 ReadUInt64()
+        {
+            byte[] bytes = ReadByte(LongSize);
+            return BitConverter.ToUInt64(bytes, 0);
+        }
+        /// <summary>
         /// Read string
         /// </summary>
         /// <returns></returns>
@@ -241,7 +267,15 @@ namespace ZyGames.Framework.RPC.IO
             byte[] bytes = ReadByte(count);
             return _encoding.GetString(bytes);
         }
-
+        /// <summary>
+        /// Read DateTime
+        /// </summary>
+        /// <returns></returns>
+        public DateTime ReadDateTime()
+        {
+            long time = ReadLong();
+            return MathUtils.UnixEpochDateTime + TimeSpan.FromSeconds(time);
+        }
         /// <summary>
         /// Read object of Protobuf serialize.
         /// </summary>
@@ -277,19 +311,40 @@ namespace ZyGames.Framework.RPC.IO
         /// </summary>
         public void RecordStart()
         {
-            _currRecordPos = 0;
-            _currRecordSize = ReadInt();
+            _currRecordPos.Push(0);
+            _currRecordSize.Push(ReadInt());
         }
 
         /// <summary>
         /// 循环结束
         /// </summary>
-        public void RecordEnd()
+        public byte[] RecordEnd()
         {
-            int count = _currRecordSize - _currRecordPos;
-            byte[] bytes = ReadByte(count);
-            _currRecordSize = 0;
-            _currRecordPos = 0;
+            int length = _currRecordSize.Count > 0 ? _currRecordSize.Pop() : 0;
+            int pos = _currRecordPos.Count > 0 ? _currRecordPos.Pop() : 0;
+            int count = length - pos;
+            byte[] bytes = new byte[0];
+            if (count > 0)
+            {
+                bytes = ReadByte(count);
+                if (_currRecordPos.Count > 0) _currRecordPos.Pop();
+            }
+            if (_currRecordPos.Count > 0)
+            {
+                int parentPos = _currRecordPos.Pop();
+                _currRecordPos.Push(parentPos + length);
+            }
+            return bytes;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        public byte[] ReadBytes()
+        {
+            int len = ReadInt();
+            return ReadByte(len);
         }
 
         /// <summary>
@@ -300,10 +355,22 @@ namespace ZyGames.Framework.RPC.IO
         /// <exception cref="ArgumentOutOfRangeException"></exception>
         public byte[] ReadByte(int count)
         {
+            VerifyBufferLength(count);
             byte[] bytes = new byte[count];
             int len = _msBuffers.Read(bytes, 0, count);
-            _currRecordPos += len;
+            int pos = _currRecordPos.Count > 0 ? _currRecordPos.Pop() : 0;
+            pos += len;
+            _currRecordPos.Push(pos);
             return bytes;
+        }
+
+        private void VerifyBufferLength(int count)
+        {
+            long len = Length - Offset;
+            if (count < 0 || count > len)
+            {
+                throw new ArgumentOutOfRangeException(string.Format("Read {0} byte len overflow max {1} len.", count, len));
+            }
         }
 
         /// <summary>
@@ -311,8 +378,10 @@ namespace ZyGames.Framework.RPC.IO
         /// </summary>
         /// <param name="count"></param>
         /// <returns></returns>
+        /// <exception cref="ArgumentOutOfRangeException"></exception>
         public byte[] PeekByte(int count)
         {
+            VerifyBufferLength(count);
             byte[] bytes = new byte[count];
             int len = _msBuffers.Read(bytes, 0, count);
             _msBuffers.Position = _msBuffers.Position - len;
@@ -554,6 +623,34 @@ namespace ZyGames.Framework.RPC.IO
             byte[] bytes = BitConverter.GetBytes(value);//2
             WriteByte(bytes);
         }
+        /// <summary>
+        /// Write long
+        /// </summary>
+        /// <param name="value"></param>
+        public void WriteByte(UInt64 value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);
+            WriteByte(bytes);
+        }
+
+        /// <summary>
+        /// Write Int
+        /// </summary>
+        /// <param name="value"></param>
+        public void WriteByte(UInt32 value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);//4
+            WriteByte(bytes);
+        }
+        /// <summary>
+        /// Write short
+        /// </summary>
+        /// <param name="value"></param>
+        public void WriteByte(UInt16 value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);//2
+            WriteByte(bytes);
+        }
 
         /// <summary>
         /// Write string
@@ -672,6 +769,30 @@ namespace ZyGames.Framework.RPC.IO
             PushObjIntoQueue(value);
         }
         /// <summary>
+        /// Push short
+        /// </summary>
+        /// <param name="value"></param>
+        public void PushIntoStack(UInt16 value)
+        {
+            PushObjIntoQueue(value);
+        }
+        /// <summary>
+        /// Push int
+        /// </summary>
+        /// <param name="value"></param>
+        public void PushIntoStack(UInt32 value)
+        {
+            PushObjIntoQueue(value);
+        }
+        /// <summary>
+        /// Push long
+        /// </summary>
+        /// <param name="value"></param>
+        public void PushIntoStack(UInt64 value)
+        {
+            PushObjIntoQueue(value);
+        }
+        /// <summary>
         /// Push float
         /// </summary>
         /// <param name="value"></param>
@@ -697,13 +818,20 @@ namespace ZyGames.Framework.RPC.IO
             value = value ?? "";
             PushObjIntoQueue(value);
         }
-
+        /// <summary>
+        /// 时间转为Ticks的long
+        /// </summary>
+        /// <param name="value"></param>
+        public void PushIntoStack(DateTime value)
+        {
+            PushObjIntoQueue(value);
+        }
         /// <summary>
         /// Push object
         /// </summary>
         /// <param name="obj"></param>
         /// <param name="useGzip"></param>
-        public void PushIntoStack(object obj, bool useGzip = true)
+        public void PushIntoStack(object obj, bool useGzip)
         {
             try
             {
@@ -735,6 +863,18 @@ namespace ZyGames.Framework.RPC.IO
             if (type == typeof(string))
             {
                 PushIntoStack(obj.ToNotNullString());
+            }
+            else if (type == typeof(UInt64))
+            {
+                PushIntoStack(obj.ToUInt64());
+            }
+            else if (type == typeof(UInt32))
+            {
+                PushIntoStack(obj.ToUInt32());
+            }
+            else if (type == typeof(UInt16))
+            {
+                PushIntoStack(obj.ToUInt16());
             }
             else if (type == typeof(long))
             {
@@ -770,7 +910,7 @@ namespace ZyGames.Framework.RPC.IO
             }
             else if (type == typeof(DateTime))
             {
-                PushIntoStack(obj.ToDateTime().ToString("yyyy-MM-dd HH:mm:ss"));
+                PushIntoStack(obj.ToDateTime().Ticks);
             }
             else if (type.IsEnum)
             {
@@ -782,7 +922,7 @@ namespace ZyGames.Framework.RPC.IO
             }
             else
             {
-                PushIntoStack(obj);
+                PushIntoStack(obj, true);
             }
         }
         /// <summary>
@@ -904,6 +1044,18 @@ namespace ZyGames.Framework.RPC.IO
                     {
                         WriteByte(Convert.ToString(item));
                     }
+                    else if (item is UInt64)
+                    {
+                        WriteByte(Convert.ToUInt64(item));
+                    }
+                    else if (item is UInt32)
+                    {
+                        WriteByte(Convert.ToUInt32(item));
+                    }
+                    else if (item is UInt16)
+                    {
+                        WriteByte(Convert.ToUInt16(item));
+                    }
                     else if (item is long)
                     {
                         WriteByte(Convert.ToInt64(item));
@@ -918,7 +1070,7 @@ namespace ZyGames.Framework.RPC.IO
                     }
                     else if (item is byte)
                     {
-                        WriteByte(Convert.ToSByte(item));
+                        WriteByte(Convert.ToByte(item));
                     }
                     else if (item is bool)
                     {
@@ -932,6 +1084,11 @@ namespace ZyGames.Framework.RPC.IO
                     {
                         WriteByte(Convert.ToSingle(item));
                     }
+                    else if (item is DateTime)
+                    {
+                        long ts = (item.ToDateTime() - MathUtils.UnixEpochDateTime).TotalSeconds.ToLong();
+                        WriteByte(ts);
+                    }
                     else if (item is MessageStructure)
                     {
                         var ds = item as MessageStructure;
@@ -943,7 +1100,9 @@ namespace ZyGames.Framework.RPC.IO
                     else if (item is byte[])
                     {
                         //已序列化好的内容，直接写入
-                        WriteByte(item as byte[]);
+                        var bytes = (byte[])(item);
+                        WriteByte(bytes.Length);
+                        WriteByte(bytes);
                     }
                 }
             }
@@ -1006,13 +1165,17 @@ namespace ZyGames.Framework.RPC.IO
             {
                 length += FloatSize;
             }
+            else if (item is DateTime)
+            {
+                length += LongSize;
+            }
             else if (item is MessageStructure)
             {
                 length += (item as MessageStructure).GetStackByteSize();
             }
             else if (item is byte[])
             {
-                length += (item as byte[]).Length;
+                length += (item as byte[]).Length + 4;
             }
             return length;
         }

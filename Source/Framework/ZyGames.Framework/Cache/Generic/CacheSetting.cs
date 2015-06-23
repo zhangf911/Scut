@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
 Copyright (c) 2013-2015 scutgame.com
 
 http://www.scutgame.com
@@ -22,11 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using ZyGames.Framework.Common.Configuration;
+using ZyGames.Framework.Config;
 using ZyGames.Framework.Event;
 using ZyGames.Framework.Model;
 
@@ -37,25 +34,16 @@ namespace ZyGames.Framework.Cache.Generic
     /// </summary>
     public class CacheSetting
     {
-        private static readonly int CacheUpdateInterval;
-        private static readonly int CacheExpiredInterval;
-        private static readonly bool CacheEnableWritetoDb;
 
-        static CacheSetting()
-        {
-            CacheUpdateInterval = ConfigUtils.GetSetting("Cache.update.interval", 600); //10 Minute
-            CacheExpiredInterval = ConfigUtils.GetSetting("Cache.expired.interval", 600);
-            CacheEnableWritetoDb = ConfigUtils.GetSetting("Cache.enable.writetoDb", true);
-        }
+        private CacheSection _cacheConfig;
+
         /// <summary>
         /// The cache setting init.
         /// </summary>
         public CacheSetting()
         {
             AutoRunEvent = true;
-            UpdateInterval = CacheUpdateInterval;
-            ExpiredInterval = CacheExpiredInterval;
-            EnableWriteToDb = CacheEnableWritetoDb;
+            _cacheConfig = ConfigManager.Configger.GetFirstOrAddConfig<CacheSection>();
         }
 
         /// <summary>
@@ -66,17 +54,29 @@ namespace ZyGames.Framework.Cache.Generic
         /// <summary>
         /// The cache expiry interval.
         /// </summary>
-        public int ExpiredInterval { get; set; }
+        public int ExpiredInterval
+        {
+            get { return _cacheConfig.ExpiredInterval; }
+            set { _cacheConfig.ExpiredInterval = value; }
+        }
 
         /// <summary>
         /// The cache update interval.
         /// </summary>
-        public int UpdateInterval { get; set; }
+        public int UpdateInterval
+        {
+            get { return _cacheConfig.UpdateInterval; }
+            set { _cacheConfig.UpdateInterval = value; }
+        }
 
         /// <summary>
-        /// Enable write to Db.
+        /// Redis data is storage to Db.
         /// </summary>
-        public bool EnableWriteToDb { get; set; }
+        public bool IsStorageToDb
+        {
+            get { return _cacheConfig.IsStorageToDb; }
+            set { _cacheConfig.IsStorageToDb = value; }
+        }
 
         /// <summary>
         /// The entity has be changed event notify.
@@ -85,7 +85,7 @@ namespace ZyGames.Framework.Cache.Generic
 
         internal void OnChangedNotify(AbstractEntity sender, CacheItemEventArgs e)
         {
-            if(ChangedHandle != null)
+            if (ChangedHandle != null)
             {
                 ChangedHandle(sender, e);
             }

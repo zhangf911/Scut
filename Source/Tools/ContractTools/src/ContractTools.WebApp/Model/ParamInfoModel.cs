@@ -26,6 +26,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Web;
 
 namespace ContractTools.WebApp.Model
 {
@@ -81,13 +82,15 @@ namespace ContractTools.WebApp.Model
             set;
         }
         /// <summary>
-        /// 
+        /// 不使用,与Remark合并
         /// </summary>
         public string Descption
         {
             get;
             set;
         }
+
+
         /// <summary>
         /// 
         /// </summary>
@@ -162,6 +165,52 @@ namespace ContractTools.WebApp.Model
         {
             get;
             set;
+        }
+        /// <summary>
+        /// 版本号
+        /// </summary>
+        public int VerID
+        {
+            get;
+            set;
+        }
+
+        /// <summary>
+        /// 层级深度
+        /// </summary>
+        public int Depth { get; set; }
+
+        /// <summary>
+        /// List显示
+        /// </summary>
+        public string ComboxDescp
+        {
+            get
+            {
+                string str = string.Format("{0}<{1}>{2}",
+                    FormatSpace(),
+                    FieldType,
+                    string.IsNullOrEmpty(Remark) ? Field : Remark
+                );
+
+                return str;
+            }
+        }
+
+        public string DepthTypeDescp { get { return FormatSpace() + FieldType; } }
+
+        private string FormatSpace()
+        {
+            string preStr = "";
+            string spaceStr = HttpUtility.HtmlDecode("&nbsp;");
+            int count = (Depth - 1) * 4;
+            for (int i = 0; i < count; i++)
+            {
+                preStr += spaceStr;
+            }
+            return Depth > 0
+                ? preStr + "├" + spaceStr
+                : "";
         }
     }
 }

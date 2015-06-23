@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
 Copyright (c) 2013-2015 scutgame.com
 
 http://www.scutgame.com
@@ -29,14 +29,14 @@ using ZyGames.Framework.Script;
 namespace ZyGames.Framework.Game.Command
 {
     /// <summary>
-    /// 脚本执行命令
+    /// 鑴氭湰鎵ц鍛戒护
     /// </summary>
     /// <example>
     /// <code>
     /// # py demo:
     /// ############
     /// def processCmd(userId, args):
-    ///     #在这里处理命令
+    ///     #鍦ㄨ繖閲屽鐞嗗懡浠?
     ///     pass 
     /// </code>
     /// </example>
@@ -56,13 +56,8 @@ namespace ZyGames.Framework.Game.Command
         /// <param name="args">Arguments.</param>
         protected override void ProcessCmd(string[] args)
         {
-            string routeName = string.Format("{0}/Gm/{1}.py", ScriptEngines.PythonDirName, _cmd);
+            string routeName = string.Format("Gm.{0}", _cmd);
             dynamic scriptScope = ScriptEngines.Execute(routeName, null);
-            if (scriptScope == null)
-            {
-                routeName = string.Format("{0}/Gm/{1}.cs", ScriptEngines.CSharpDirName, _cmd);
-                scriptScope = ScriptEngines.Execute(routeName, null);
-            }
             if (scriptScope != null)
             {
                 try

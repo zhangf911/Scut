@@ -29,7 +29,6 @@ using ZyGames.Framework.Common.Log;
 using ZyGames.Framework.Game.Configuration;
 using ZyGames.Framework.Game.Lang;
 using ZyGames.Framework.Game.Pay;
-using ZyGames.Framework.Game.Runtime;
 using ZyGames.Framework.Game.Service;
 
 namespace ZyGames.Framework.Game.Contract.Action
@@ -96,7 +95,7 @@ namespace ZyGames.Framework.Game.Contract.Action
         /// </summary>
         /// <param name="aActionId">A action identifier.</param>
         /// <param name="httpGet">Http get.</param>
-        public PayNormalAction(short aActionId, HttpGet httpGet)
+        public PayNormalAction(short aActionId, ActionGetter httpGet)
             : base(aActionId, httpGet)
         {
         }

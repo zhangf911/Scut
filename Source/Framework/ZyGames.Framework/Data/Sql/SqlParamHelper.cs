@@ -25,7 +25,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
-using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Log;
 
 namespace ZyGames.Framework.Data.Sql
@@ -125,7 +124,7 @@ namespace ZyGames.Framework.Data.Sql
             }
             else if (value is Byte[])
             {
-                return SqlDbType.VarBinary;
+                return SqlDbType.Image;
             }
             else if (value is long)
             {
@@ -154,6 +153,10 @@ namespace ZyGames.Framework.Data.Sql
             else if (value is Enum)
             {
                 return SqlDbType.Int;
+            }
+            else if (value is Guid)
+            {
+                return SqlDbType.UniqueIdentifier;
             }
             return SqlDbType.VarChar;
         }

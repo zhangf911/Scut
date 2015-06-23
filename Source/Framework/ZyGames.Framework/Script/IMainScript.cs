@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
 Copyright (c) 2013-2015 scutgame.com
 
 http://www.scutgame.com
@@ -22,11 +22,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
 namespace ZyGames.Framework.Script
 {
     /// <summary>
@@ -40,8 +35,18 @@ namespace ZyGames.Framework.Script
         void Start(string[] args);
 
         /// <summary>
+        /// 
+        /// </summary>
+        byte[] ProcessRequest(object package, object param);
+
+        /// <summary>
         /// Stop
         /// </summary>
         void Stop();
+
+        /// <summary>
+        /// Main
+        /// </summary>
+        void ReStart();
     }
 }

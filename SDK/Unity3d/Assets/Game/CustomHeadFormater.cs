@@ -1,5 +1,6 @@
 ﻿using System;
 using GameRanking.Pack;
+using Newtonsoft.Json;
 using ZyGames.Framework.Common.Serialization;
 
 /// <summary>
@@ -7,6 +8,28 @@ using ZyGames.Framework.Common.Serialization;
 /// </summary>
 public class CustomHeadFormater : IHeadFormater
 {
+    public bool TryParse(string data, NetworkType type, out PackageHead head, out object body)
+    {
+        body = null;
+        head = null;
+        try
+        {
+            ResponseBody result = JsonConvert.DeserializeObject<ResponseBody>(data);
+            if (result == null) return false;
+
+            head = new PackageHead();
+            head.StatusCode = result.StateCode;
+            head.Description = result.StateDescription;
+            body = result.Data;
+            return true;
+
+        }
+        catch (Exception ex)
+        {
+            return false;
+        }
+    }
+
     public bool TryParse(byte[] data, out PackageHead head, out byte[] bodyBytes)
     {
         bodyBytes = null;
@@ -43,6 +66,24 @@ public class CustomHeadFormater : IHeadFormater
         //UnityEngine.Debug.Log(string.Format("ActionId:{0}, ErrorCode:{1}, len:{2}", resPack.ActionId, resPack.ErrorCode, bodyBytes.Length));
 
         return true;
+    }
+
+    public byte[] BuildHearbeatPackage()
+    {
+        var writer = NetWriter.Instance;
+        MessagePack headPack = new MessagePack()
+        {
+            MsgId = NetWriter.MsgId,
+            ActionId = 1,
+            SessionId = NetWriter.SessionID,
+            UserId = (int)NetWriter.UserID
+        };
+        byte[] headBytes = ProtoBufUtils.Serialize(headPack);
+        writer.SetHeadBuffer(headBytes);
+        writer.SetBodyData(new byte[0]);
+        var data = writer.PostData();
+        NetWriter.resetData();
+        return data;
     }
 
     private int GetInt(byte[] data, ref int pos)

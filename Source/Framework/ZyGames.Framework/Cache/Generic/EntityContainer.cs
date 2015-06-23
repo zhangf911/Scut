@@ -99,10 +99,27 @@ namespace ZyGames.Framework.Cache.Generic
             get { return _container.LoadingStatus; }
         }
 
+        public CacheItemSet[] ChildrenItem
+        {
+            get
+            {
+                int index = 0;
+                CacheItemSet[] items = new CacheItemSet[Container.Count];
+                Container.Foreach<CacheItemSet>((key, itemSet) =>
+                {
+                    items[index] = itemSet;
+                    index++;
+                    return true;
+                });
+                return items;
+            }
+        }
+
         private BaseCollection Container
         {
             get
             {
+
                 if (_container != null)
                 {
                     return _container.Collection;
@@ -161,6 +178,23 @@ namespace ZyGames.Framework.Cache.Generic
                 T entity = (T)itemSet.GetItem();
                 return func(key, entity);
             });
+        }
+
+        public T TakeEntityFromKey(string key)
+        {
+            T value = default(T);
+            string entityKey = key;
+            Container.Foreach<CacheItemSet>((k, itemSet) =>
+            {
+                BaseCollection enityGroup = (BaseCollection)itemSet.GetItem();
+                if (enityGroup.ContainsKey(entityKey))
+                {
+                    value = enityGroup[entityKey] as T;
+                    return false;
+                }
+                return true;
+            });
+            return value;
         }
 
         /// <summary>
@@ -326,6 +360,33 @@ namespace ZyGames.Framework.Cache.Generic
             return false;
         }
 
+        public List<V> LoadFrom<V>(TransReceiveParam receiveParam) where V : AbstractEntity, new()
+        {
+            List<V> dataList = null;
+            if (_container != null && _loadFactory != null)
+            {
+                if (_container.IsEmpty)
+                {
+                    Initialize();
+                }
+                if (_container.LoadingStatus != LoadingStatus.None)
+                {
+                    //ReLoad时需要清除掉之前的
+                    _container.Collection.Clear();
+                }
+                _container.OnLoadFactory(() =>
+                {
+                    if (_cachePool.TryReceiveData(receiveParam, out dataList))
+                    {
+                        return true;
+                    }
+                    return false;
+                }, true);
+
+            }
+            return dataList;
+        }
+
         /// <summary>
         /// 
         /// </summary>
@@ -371,10 +432,14 @@ namespace ZyGames.Framework.Cache.Generic
                     return false;
                 }
             }
+            CheckEventBind(entityData as AbstractEntity);
+            entityData.IsInCache = true;
+            entityData.TriggerNotify();
             itemSet.SetItem(entityData);
             itemSet.OnLoadSuccess();
             return true;
         }
+
 
         private CacheItemSet CreateItemSet(CacheType cacheType, int periodTime)
         {
@@ -399,6 +464,9 @@ namespace ZyGames.Framework.Cache.Generic
             itemSet.SetItem(entityData);
             if (Container.TryAdd(entityKey, itemSet))
             {
+                CheckEventBind(entityData as AbstractEntity);
+                entityData.IsInCache = true;
+                entityData.TriggerNotify();
                 itemSet.OnLoadSuccess();
                 return true;
             }
@@ -426,18 +494,28 @@ namespace ZyGames.Framework.Cache.Generic
         /// <returns></returns>
         public bool AddOrUpdateGroup(string groupKey, string key, T entityData, int periodTime)
         {
+            bool result = false;
             CacheItemSet itemSet = InitGroupContainer(groupKey, periodTime);
             if (itemSet != null && !Equals(entityData, default(T)))
             {
                 var data = (BaseCollection)itemSet.GetItem();
-                T oldValue;
-                if (data.TryGetValue(key, out oldValue))
+                result = data.AddOrUpdate(key, entityData, (k, t) => entityData) == entityData;
+                if (result)
                 {
-                    return data.TryUpdate(key, entityData, oldValue);
+                    var temp = entityData as AbstractEntity;
+                    CheckEventBind(temp);
+                    entityData.IsInCache = true;
+                    if (temp != null && (temp.IsNew || temp.HasChanged))
+                    {
+                        entityData.TriggerNotify();
+                    }
+                    if (itemSet.LoadingStatus == LoadingStatus.None)
+                    {
+                        itemSet.OnLoadSuccess();
+                    }
                 }
-                return data.TryAdd(key, entityData);
             }
-            return false;
+            return result;
         }
         /// <summary>
         /// 
@@ -454,6 +532,10 @@ namespace ZyGames.Framework.Cache.Generic
             {
                 if (!Equals(entityData, default(T)) && ((BaseCollection)itemSet.GetItem()).TryAdd(key, entityData))
                 {
+                    CheckEventBind(entityData as AbstractEntity);
+                    entityData.IsInCache = true;
+                    entityData.TriggerNotify();
+                    itemSet.OnLoadSuccess();
                     return true;
                 }
             }
@@ -470,11 +552,12 @@ namespace ZyGames.Framework.Cache.Generic
         {
             var lazy = new Lazy<CacheItemSet>(() =>
             {
-                BaseCollection itemData = IsReadonly
+                BaseCollection itemCollection = IsReadonly
                     ? (BaseCollection)new ReadonlyCacheCollection()
                     : new CacheCollection();
                 var itemSet = CreateItemSet(CacheType.Dictionary, periodTime);
-                itemSet.SetItem(itemData);
+                itemSet.HasCollection = true;
+                itemSet.SetItem(itemCollection);
                 return itemSet;
             });
 
@@ -507,12 +590,15 @@ namespace ZyGames.Framework.Cache.Generic
             {
                 var temp = new CacheItemSet(CacheType.Queue, periodTime, IsReadonly);
                 temp.SetItem(new CacheQueue<T>(expiredHandle));
+                temp.OnLoadSuccess();
                 return temp;
             });
 
             var itemSet = Container.GetOrAdd(groupKey, name => lazy.Value);
             if (itemSet != null)
             {
+                entityData.IsInCache = true;
+                //队列不存Redis,不触发事件
                 ((CacheQueue<T>)itemSet.GetItem()).Enqueue(entityData);
                 return true;
             }
@@ -520,7 +606,7 @@ namespace ZyGames.Framework.Cache.Generic
         }
 
         /// <summary>
-        /// 
+        /// Remove entity from the cache, if use loaded from Redis
         /// </summary>
         /// <param name="groupKey"></param>
         /// <param name="callback"></param>
@@ -538,6 +624,12 @@ namespace ZyGames.Framework.Cache.Generic
                 }
                 if (result)
                 {
+                    var entity = itemSet.ItemData as IItemChangeEvent;
+                    if (entity != null)
+                    {
+                        entity.IsInCache = false;
+                        entity.IsExpired = true;
+                    }
                     itemSet.SetRemoveStatus();
                     itemSet.Dispose();
                 }
@@ -545,8 +637,9 @@ namespace ZyGames.Framework.Cache.Generic
             }
             return false;
         }
+
         /// <summary>
-        /// 
+        /// Remove entity from the cache, if use loaded from Redis
         /// </summary>
         /// <param name="groupKey"></param>
         /// <param name="key"></param>
@@ -559,7 +652,8 @@ namespace ZyGames.Framework.Cache.Generic
             if (Container.TryGetValue(groupKey, out itemSet))
             {
                 T entityData;
-                if (((BaseCollection)itemSet.GetItem()).TryRemove(key, out entityData))
+                var items = (BaseCollection)itemSet.GetItem();
+                if (items.TryRemove(key, out entityData))
                 {
                     bool result = true;
                     if (callback != null)
@@ -568,9 +662,17 @@ namespace ZyGames.Framework.Cache.Generic
                     }
                     if (result)
                     {
+                        //Not trigger event notify
+                        entityData.IsInCache = false;
+                        entityData.IsExpired = true;
                         entityData.Dispose();
                     }
                     return result;
+                }
+                if (items.Count == 0 && Container.TryRemove(groupKey, out itemSet))
+                {
+                    itemSet.SetRemoveStatus();
+                    itemSet.Dispose();
                 }
             }
             return false;
@@ -586,7 +688,6 @@ namespace ZyGames.Framework.Cache.Generic
             if (_cachePool.TryRemove(_containerKey, out container, callback))
             {
                 container.SetRemoveStatus();
-                container.Dispose();
                 return true;
             }
             return false;
@@ -651,7 +752,6 @@ namespace ZyGames.Framework.Cache.Generic
 
         public void UnChangeNotify(string key)
         {
-
             CacheItemSet itemSet;
             if (Container.TryGetValue(key, out itemSet))
             {
@@ -660,8 +760,28 @@ namespace ZyGames.Framework.Cache.Generic
                 {
                     ChangeType = CacheItemChangeType.UnChange
                 };
-                itemSet.UnChangeNotify(this, e);
+                var itemData = itemSet.ItemData as IItemChangeEvent;
+                if (itemData != null)
+                {
+                    itemData.UnChangeNotify(this, e);
+                }
+                else if (itemSet.ItemData is BaseCollection)
+                {
+                    //Not notify
+                }
             }
+        }
+
+        /// <summary>
+        /// 尝试从DB中恢复数据
+        /// </summary>
+        /// <typeparam name="V"></typeparam>
+        /// <param name="receiveParam"></param>
+        /// <param name="dataList"></param>
+        /// <returns></returns>
+        public bool TryRecoverFromDb<V>(TransReceiveParam receiveParam, out List<V> dataList) where V : AbstractEntity, new()
+        {
+            return _cachePool.TryLoadFromDb(receiveParam, out dataList);
         }
 
         protected override void Dispose(bool disposing)
@@ -716,5 +836,25 @@ namespace ZyGames.Framework.Cache.Generic
             return false;
         }
 
+        /// <summary>
+        /// 检查是否有绑定事件，防止没有绑定导致数据丢失
+        /// </summary>
+        /// <param name="data"></param>
+        private void CheckEventBind(AbstractEntity data)
+        {
+            if (data == null || data.IsReadOnly) return;
+
+            var columns = data.GetSchema().GetObjectColumns();
+            foreach (var column in columns)
+            {
+                var temp = data.GetPropertyValue(column.Name) as IItemChangeEvent;
+                if (temp != null && temp.ItemEvent.Parent == null)
+                {
+                    temp.IsInCache = true;
+                    temp.PropertyName = column.Name;
+                    data.AddChildrenListener(temp);
+                }
+            }
+        }
     }
 }

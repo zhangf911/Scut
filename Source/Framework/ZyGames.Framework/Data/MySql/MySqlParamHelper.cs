@@ -24,7 +24,6 @@ THE SOFTWARE.
 using System;
 using System.Collections.Generic;
 using System.Data;
-using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Log;
 using MySql.Data.MySqlClient;
 
@@ -145,6 +144,10 @@ namespace ZyGames.Framework.Data.MySql
             {
                 return MySqlDbType.Int32;
             }
+            //else if (value is Guid)
+            //{
+            //    return MySqlDbType.Guid;
+            //}
             return MySqlDbType.VarChar;
         }
 

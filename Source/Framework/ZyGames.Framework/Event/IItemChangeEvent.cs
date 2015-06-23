@@ -22,14 +22,30 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
+using System.Threading;
+using Newtonsoft.Json;
+using ZyGames.Framework.Common;
 
 namespace ZyGames.Framework.Event
 {
     /// <summary>
     /// 变更事件接口
     /// </summary>
-    public abstract class IItemChangeEvent : IDisposable
+    public abstract class IItemChangeEvent : IDisposable, ICloneable
     {
+        /// <summary>
+        /// 
+        /// </summary>
+
+        [JsonIgnore]
+        public bool IsExpired { get; set; }
+        /// <summary>
+        /// 
+        /// </summary>
+        [JsonIgnore]
+        public bool IsInCache { get; set; }
+
+
         /// <summary>
         /// 是否有变更
         /// </summary>
@@ -43,13 +59,17 @@ namespace ZyGames.Framework.Event
         /// <summary>
         /// 当前对象变更事件对象
         /// </summary>
-        internal abstract CacheItemChangeEvent ItemEvent { get; }
+        public abstract CacheItemChangeEvent ItemEvent { get; }
 
         /// <summary>
         /// 当前对象的子类变更事件对象
         /// </summary>
-        internal abstract CacheItemChangeEvent ChildrenEvent { get; }
-        
+        public abstract CacheItemChangeEvent ChildrenEvent { get; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public abstract void TriggerNotify();
         /// <summary>
         /// 禁用子类事件通知
         /// </summary>
@@ -65,6 +85,18 @@ namespace ZyGames.Framework.Event
         /// </summary>
         /// <param name="changeEvent"></param>
         internal abstract void RemoveChildrenListener(object changeEvent);
+
+        /// <summary>
+        /// 移除与父类事件绑定
+        /// </summary>
+        public void RemoveParentEvent()
+        {
+            var obj = ItemEvent.Parent as IItemChangeEvent;
+            if (obj != null)
+            {
+                obj.RemoveChildrenListener(this);
+            }
+        }
 
         /// <summary>
         /// 解除变更事件通知
@@ -117,6 +149,15 @@ namespace ZyGames.Framework.Event
             {
                 GC.SuppressFinalize(this);
             }
+        }
+
+        /// <summary>
+        /// Only copy property
+        /// </summary>
+        /// <returns></returns>
+        public object Clone()
+        {
+           return ObjectCloner.Clone(this);
         }
     }
 }

@@ -22,9 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ZyGames.Framework.Common.Log;
@@ -175,7 +173,7 @@ namespace ZyGames.Framework.Plugin.Test
         /// <param name="message"></param>
         public void WriteLine(string message)
         {
-            Console.WriteLine("{0}用例>>{1}", Name, message);
+            TraceLog.WriteLine("{0}用例>>{1}", Name, message);
         }
 
         private Stopwatch StartNewWatch()

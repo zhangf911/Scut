@@ -21,18 +21,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
+
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using ZyGames.Framework.Common;
-using ZyGames.Framework.Common.Log;
-using ZyGames.Framework.Game.Com;
 using ZyGames.Framework.Game.Com.Generic;
 using ZyGames.Framework.Game.Context;
 using ZyGames.Framework.Game.Lang;
 using ZyGames.Framework.Game.Runtime;
 using ZyGames.Framework.Game.Service;
+using ZyGames.Framework.RPC.Sockets;
 
 namespace ZyGames.Framework.Game.Contract.Action
 {
@@ -52,6 +49,20 @@ namespace ZyGames.Framework.Game.Contract.Action
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        protected bool EnableWebSocket
+        {
+            set
+            {
+                if (value)
+                {
+                    IsWebSocket = true;
+                    actionGetter.OpCode = OpCode.Text;
+                }
+            }
+        }
+        /// <summary>
         /// 开启支付通知
         /// </summary>
         public PaymentNotify EnablePayNotify
@@ -59,6 +70,40 @@ namespace ZyGames.Framework.Game.Contract.Action
             get;
             protected set;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        protected override bool ValidateElement()
+        {
+            return true;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
+        protected bool CheckValidityPeriod(TimeSpan minInterval, TimeSpan maxInterval)
+        {
+            string st = actionGetter.GetSt();
+            RefleshSt();
+            if (IgnoreActionId)
+            {
+                return true;
+            }
+            if (!string.IsNullOrEmpty(st) && !string.Equals(st, "st", StringComparison.OrdinalIgnoreCase))
+            {
+                long time;
+                if (long.TryParse(st, out time))
+                {
+                    var ts = MathUtils.Now - MathUtils.UnixEpochDateTime.AddSeconds(time);
+                    return maxInterval == TimeSpan.Zero || (ts > minInterval && ts < maxInterval);
+                }
+            }
+            return true;
+        }
+
         /// <summary>
         /// 
         /// </summary>
@@ -77,8 +122,8 @@ namespace ZyGames.Framework.Game.Contract.Action
             {
                 return true;
             }
-            BaseUser gameUser;
-            LoginStatus status = CheckUser(Sid, UserId, out gameUser);
+            IUser user;
+            LoginStatus status = CheckUser(out user);
 
             if (IsRunLoader)
             {
@@ -87,26 +132,28 @@ namespace ZyGames.Framework.Game.Contract.Action
             switch (status)
             {
                 case LoginStatus.NoLogin:
+                case LoginStatus.Timeout:
                     ErrorCode = Language.Instance.TimeoutCode;
                     ErrorInfo = Language.Instance.AcountNoLogin;
                     result = false;
                     break;
                 case LoginStatus.Logined:
-                    ErrorCode = Language.Instance.TimeoutCode;
+                    ErrorCode = Language.Instance.DuplicateCode;
                     ErrorInfo = Language.Instance.AcountLogined;
                     result = false;
                     break;
+                case LoginStatus.Exit:
+                    ErrorCode = Language.Instance.KickedOutCode;
+                    ErrorInfo = Language.Instance.AcountIsLocked;
+                    result = false;
+                    break;
                 case LoginStatus.Success:
-                    if (Current != null)
-                    {
-                        Current.User = gameUser;
-                    }
                     result = true;
                     break;
                 default:
                     break;
             }
-            if (gameUser != null && gameUser.IsFengJinStatus)
+            if (CheckUserIsLocked(user))
             {
                 ErrorCode = Language.Instance.TimeoutCode;
                 ErrorInfo = Language.Instance.AcountIsLocked;
@@ -114,10 +161,21 @@ namespace ZyGames.Framework.Game.Contract.Action
             }
             if (result && IsRefresh)
             {
-                DoRefresh(actionId, gameUser);
+                DoRefresh(actionId, user);
             }
             return result;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="user"></param>
+        /// <returns></returns>
+        protected virtual bool CheckUserIsLocked(IUser user)
+        {
+            return false;
+        }
+
         /// <summary>
         /// Gets a value indicating whether this instance is refresh.
         /// </summary>
@@ -129,37 +187,29 @@ namespace ZyGames.Framework.Game.Contract.Action
         /// <summary>
         /// 不检查的ActionID
         /// </summary>
-        protected abstract bool IgnoreActionId
+        protected virtual bool IgnoreActionId
         {
-            get;
+            get { return false; }
         }
+
         /// <summary>
         /// Checks the user.
         /// </summary>
         /// <returns>The user.</returns>
-        /// <param name="sessionId">Session I.</param>
-        /// <param name="userId">User identifier.</param>
-        /// <param name="gameUser">Game user.</param>
-        protected LoginStatus CheckUser(string sessionId, int userId, out BaseUser gameUser)
+        /// <param name="user">Game user.</param>
+        protected LoginStatus CheckUser(out IUser user)
         {
-            gameUser = null;
-            if (UserFactory != null)
+            user = null;
+            if (Current != null)
             {
-                gameUser = UserFactory(userId);
-                if (gameUser != null)
-                {
-                    var session = GameSession.Get(userId);
-                    if (session != null)
-                    {
-                        return session.SessionId == sessionId ? LoginStatus.Success : LoginStatus.Logined;
-                    }
-                    //todo trace session is null
-                    session = GameSession.Get(sessionId);
-                    TraceLog.ReleaseWriteDebug("CheckUser Sid:{0},Uid:{1},session info:{2}", sessionId, userId,
-                        session == null ? "is empty" :
-                        string.Format("{0}, bind sid:{1}", session.UserId, GameSession.GetUserBindSid(userId))
-                        );
-                }
+                user = Current.User;
+                return Current.IsAuthorized
+                    ? LoginStatus.Success
+                    : Current.IsTimeout
+                        ? LoginStatus.Timeout
+                        : string.IsNullOrEmpty(Current.OldSessionId)
+                            ? LoginStatus.NoLogin
+                            : LoginStatus.Logined;
             }
             return LoginStatus.NoLogin;
         }
@@ -168,7 +218,7 @@ namespace ZyGames.Framework.Game.Contract.Action
         /// </summary>
         /// <param name="actionId">Action identifier.</param>
         /// <param name="gameUser">Game user.</param>
-        protected void DoRefresh(int actionId, BaseUser gameUser)
+        protected void DoRefresh(int actionId, IUser gameUser)
         {
             if (EnablePayNotify != null)
             {
@@ -178,6 +228,23 @@ namespace ZyGames.Framework.Game.Contract.Action
             {
                 gameUser.RefleshOnlineDate();
             }
+        }
+    }
+
+    /// <summary>
+    /// Websocket use.
+    /// </summary>
+    public abstract class JsonAuthorizeAction : AuthorizeAction
+    {
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="actionId"></param>
+        /// <param name="actionGetter"></param>
+        protected JsonAuthorizeAction(int actionId, ActionGetter actionGetter)
+            : base(actionId, actionGetter)
+        {
+            EnableWebSocket = true;
         }
     }
 }

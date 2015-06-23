@@ -23,7 +23,6 @@ THE SOFTWARE.
 ****************************************************************************/
 using System;
 using System.Collections.Generic;
-using System.Security.Cryptography;
 
 namespace ZyGames.Framework.Common
 {
@@ -35,17 +34,8 @@ namespace ZyGames.Framework.Common
     {
         private static int MinPercent = 1;
         private static int MaxPercent = 100;
-        private static Random random = new Random(GetRandomSeed());
+        private static Random random = new Random();
 
-        private static int GetRandomSeed()
-        {
-            byte[] bytes = new byte[4];
-            RNGCryptoServiceProvider rng = new RNGCryptoServiceProvider();
-            rng.GetBytes(bytes);
-            return BitConverter.ToInt32(bytes, 0);
-        }
-
-        private const int NameMaxLength = 4;
         /// <summary>
         /// 随机取名字
         /// </summary>
@@ -125,6 +115,29 @@ namespace ZyGames.Framework.Common
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="increase"></param>
+        /// <returns></returns>
+        public static bool IsHitNew(double value, double increase)
+        {
+            return NextBool(value * (1 + increase));
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="value"></param>
+        /// <param name="increase"></param>
+        /// <param name="radix"></param>
+        /// <returns></returns>
+        public static bool IsHitNew(int value, int increase, int radix = 100)
+        {
+            return NextBool((value / radix) * (1 + increase / radix));
+        }
+
+        /// <summary>
         /// 是否命中
         /// </summary>
         /// <param name="percent">百分比概率值</param>
@@ -162,6 +175,41 @@ namespace ZyGames.Framework.Common
         public static bool IsHit(decimal percent)
         {
             return NextBool((double)percent);
+        }
+  
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="percents"></param>
+        /// <returns></returns>
+        public static int HitIndex(double[] percents)
+        {
+            int index = -1;
+            int hitIndex = -1;
+            double max = 0;
+            int maxIndex = 0;
+            var r = random.NextDouble();
+            double offset = 0;
+            foreach (var p in percents)
+            {
+                index++;
+                if (p > max)
+                {
+                    maxIndex = index;
+                    max = p;
+                }
+                offset += p;
+                if (r <= offset)
+                {
+                    hitIndex = index;
+                    break;
+                }
+            }
+            if (hitIndex == -1)
+            {
+                hitIndex = maxIndex;
+            }
+            return hitIndex;
         }
 
         /// <summary>
@@ -390,5 +438,50 @@ namespace ZyGames.Framework.Common
             values[count - 1] = total - currentTotal;
             return values;
         }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static T[] RandomSort<T>(T[] source)
+        {
+            int num = source.Length / 2;
+            for (int i = 0; i < num; i++)
+            {
+                int num2 = GetRandom(0, source.Length);
+                int num3 = GetRandom(0, source.Length);
+                if (num2 != num3)
+                {
+                    T t = source[num3];
+                    source[num3] = source[num2];
+                    source[num2] = t;
+                }
+            }
+            return source;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <returns></returns>
+        public static List<T> RandomSort<T>(List<T> source)
+        {
+            int num = source.Count / 2;
+            for (int i = 0; i < num; i++)
+            {
+                int num2 = GetRandom(0, source.Count);
+                int num3 = GetRandom(0, source.Count);
+                if (num2 != num3)
+                {
+                    T t = source[num3];
+                    source[num3] = source[num2];
+                    source[num2] = t;
+                }
+            }
+            return source;
+        }
+
     }
 }

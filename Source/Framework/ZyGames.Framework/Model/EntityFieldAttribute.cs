@@ -107,7 +107,7 @@ namespace ZyGames.Framework.Model
         public int ColumnLength { get; set; }
 
         /// <summary>
-        /// decimal类型指精度范围
+        /// 列的小数位数
         /// </summary>
         public int ColumnScale { get; set; }
 
@@ -135,6 +135,11 @@ namespace ZyGames.Framework.Model
         }
 
         /// <summary>
+        /// 
+        /// </summary>
+        public bool IsUnique { get; set; }
+
+        /// <summary>
         /// 是否自增
         /// </summary>
         public bool IsIdentity
@@ -142,6 +147,11 @@ namespace ZyGames.Framework.Model
             get;
             set;
         }
+
+        /// <summary>
+        /// 自增开始编号
+        /// </summary>
+        public int IdentityNo { get; set; }
 
         /// <summary>
         /// 禁用或排除数据库取值

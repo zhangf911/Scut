@@ -21,64 +21,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ****************************************************************************/
-using System;
-using System.Reflection;
-using ZyGames.Framework.Common.Log;
+
 using ZyGames.Framework.Game.Runtime;
-using ZyGames.Framework.Script;
 
 namespace GameServer
 {
     class Program
     {
-        private static string CharFormat =
-@"///////////////////////////////////////////////////////////////////////////
-
-    //   ) )  //   ) )  //   / / /__  ___/   SCUT Server version {0}
-   ((        //        //   / /    / /       Game: {1}   Server: {2}
-     \\     //        //   / /    / /        Port: {3}
-       ) ) //        //   / /    / /        
-((___ / / ((____/ / ((___/ /    / /                http://www.scutgame.com
-
-";
         static void Main(string[] args)
         {
-            string date = DateTime.Now.ToString("HH:mm:ss");
-            try
-            {
-                ConsoleColor currentForeColor = Console.ForegroundColor;
-                var setting = new EnvironmentSetting();
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine(string.Format(CharFormat,
-                    Assembly.GetExecutingAssembly().GetName().Version,
-                    setting.ProductCode,
-                    setting.ProductServerId,
-                    setting.GamePort));
-                GameEnvironment.Start(setting);
-                Console.ForegroundColor = currentForeColor;
-
-                dynamic instance;
-                if (ScriptEngines.RunMainClass(out instance, args))
-                {
-                    Console.WriteLine("{0} Server has started successfully!", date);
-                    Console.WriteLine("# Server is listening...");
-                }
-                else
-                {
-                    Console.WriteLine("{0} Server failed to start!", date);
-                }
-                Console.ReadKey();
-                if (instance != null)
-                {
-                    instance.Stop();
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("{0} Server failed to start!", date);
-                TraceLog.WriteError("Server failed to start error:{0}", ex);
-                Console.ReadKey();
-            }
+           new ConsoleRuntimeHost().Start();
         }
     }
 }

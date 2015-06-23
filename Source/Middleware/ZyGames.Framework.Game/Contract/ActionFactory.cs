@@ -23,11 +23,10 @@ THE SOFTWARE.
 ****************************************************************************/
 using System;
 using System.Collections.Generic;
-using System.Net;
-using System.Net.Sockets;
+using System.Linq;
 using System.Text;
 using System.Web;
-using IronPython.Modules;
+using ServiceStack.Common.Extensions;
 using ZyGames.Framework.Common;
 using ZyGames.Framework.Common.Locking;
 using ZyGames.Framework.Common.Log;
@@ -37,7 +36,7 @@ using ZyGames.Framework.Game.Runtime;
 using ZyGames.Framework.Game.Service;
 using ZyGames.Framework.Game.Contract.Action;
 using ZyGames.Framework.Net;
-using ZyGames.Framework.RPC.IO;
+using ZyGames.Framework.RPC.Sockets;
 using ZyGames.Framework.Script;
 
 namespace ZyGames.Framework.Game.Contract
@@ -74,18 +73,16 @@ namespace ZyGames.Framework.Game.Contract
         /// <summary>
         /// 请求处理
         /// </summary>
-        /// <param name="userFactory"></param>
-        public static void Request(Func<int, BaseUser> userFactory)
+        public static void Request()
         {
-            Request(GameEnvironment.Setting.ActionTypeName, userFactory);
+            Request(GameEnvironment.Setting.ActionTypeName);
         }
 
         /// <summary>
         /// 请求处理
         /// </summary>
         /// <param name="typeName"></param>
-        /// <param name="userFactory"></param>
-        public static void Request(string typeName, Func<int, BaseUser> userFactory)
+        public static void Request(string typeName)
         {
             if (HttpContext.Current == null)
             {
@@ -93,7 +90,7 @@ namespace ZyGames.Framework.Game.Contract
             }
             HttpGet httpGet = new HttpGet(HttpContext.Current.Request);
             HttpGameResponse response = new HttpGameResponse(HttpContext.Current.Response);
-            Request(typeName, httpGet, response, userFactory);
+            Request(typeName, httpGet, response);
         }
 
         /// <summary>
@@ -101,10 +98,9 @@ namespace ZyGames.Framework.Game.Contract
         /// </summary>
         /// <param name="actionGetter"></param>
         /// <param name="response"></param>
-        /// <param name="userFactory"></param>
-        public static void Request(ActionGetter actionGetter, BaseGameResponse response, Func<int, BaseUser> userFactory)
+        public static void Request(ActionGetter actionGetter, BaseGameResponse response)
         {
-            Request(GameEnvironment.Setting.ActionTypeName, actionGetter, response, userFactory);
+            Request(GameEnvironment.Setting.ActionTypeName, actionGetter, response);
         }
 
         /// <summary>
@@ -112,9 +108,8 @@ namespace ZyGames.Framework.Game.Contract
         /// </summary>
         /// <param name="typeName"></param>
         /// <param name="response"></param>
-        /// <param name="userFactory"></param>
         /// <param name="actionGetter"></param>
-        public static void Request(string typeName, ActionGetter actionGetter, BaseGameResponse response, Func<int, BaseUser> userFactory)
+        public static void Request(string typeName, ActionGetter actionGetter, BaseGameResponse response)
         {
             var actionId = actionGetter.GetActionId().ToInt();
             string tempName = string.Format(typeName, actionId);
@@ -125,7 +120,7 @@ namespace ZyGames.Framework.Game.Contract
                 if (isRL || actionGetter.CheckSign())
                 {
                     BaseStruct action = FindRoute(typeName, actionGetter, actionId);
-                    Process(action, actionGetter, response, userFactory);
+                    Process(action, actionGetter, response);
                     if (action != null)
                     {
                         return;
@@ -148,12 +143,11 @@ namespace ZyGames.Framework.Game.Contract
         /// <summary>
         /// 请求脚本处理
         /// </summary>
-        /// <param name="userFactory">创建user对象工厂</param>
-        public static void RequestScript(Func<int, BaseUser> userFactory = null)
+        public static void RequestScript()
         {
             HttpGet httpGet = new HttpGet(HttpContext.Current.Request);
             BaseGameResponse response = new HttpGameResponse(HttpContext.Current.Response);
-            RequestScript(httpGet, response, userFactory);
+            RequestScript(httpGet, response);
         }
 
         /// <summary>
@@ -161,8 +155,7 @@ namespace ZyGames.Framework.Game.Contract
         /// </summary>
         /// <param name="actionGetter">请求参数对象</param>
         /// <param name="response">字节输出处理</param>
-        /// <param name="userFactory">创建user对象工厂,可为Null</param>
-        public static void RequestScript(ActionGetter actionGetter, BaseGameResponse response, Func<int, BaseUser> userFactory)
+        public static void RequestScript(ActionGetter actionGetter, BaseGameResponse response)
         {
             int actionId = actionGetter.GetActionId();
             string errorInfo = "";
@@ -174,7 +167,7 @@ namespace ZyGames.Framework.Game.Contract
                     BaseStruct baseStruct = FindScriptRoute(actionGetter, actionId);
                     if (baseStruct != null)
                     {
-                        Process(baseStruct, actionGetter, response, userFactory);
+                        Process(baseStruct, actionGetter, response);
                         return;
                     }
                 }
@@ -192,66 +185,87 @@ namespace ZyGames.Framework.Game.Contract
             response.WriteError(actionGetter, Language.Instance.ErrorCode, errorInfo);
         }
 
-        /*/// <summary>
-        /// 出错处理
+        /// <summary>
+        /// 获取Action处理的输出字节流
         /// </summary>
-        /// <param name="response"></param>
-        /// <param name="msgId"></param>
+        /// <param name="actionDispatcher"></param>
         /// <param name="actionId"></param>
-        /// <param name="errorInfo"></param>
-        public static void RequestError(BaseGameResponse response, int msgId, int actionId, string errorInfo)
+        /// <param name="session"></param>
+        /// <param name="parameters"></param>
+        /// <param name="opCode"></param>
+        /// <param name="message"></param>
+        /// <returns></returns>
+        public static byte[] GetActionResponse(IActionDispatcher actionDispatcher, int actionId, GameSession session, Parameters parameters, sbyte opCode, object message = null)
         {
-            RequestError(response, msgId, actionId, ErrorCode, errorInfo);
+            var requestPackage = GetResponsePackage(actionId, session, parameters, opCode, message);
+            return GetActionResponse(actionDispatcher, actionId, session, requestPackage);
         }
 
         /// <summary>
-        /// 出错处理
+        /// 
         /// </summary>
-        /// <param name="response"></param>
-        /// <param name="msgId"></param>
         /// <param name="actionId"></param>
-        /// <param name="errorCode"></param>
-        /// <param name="errorInfo"></param>
-        public static void RequestError(BaseGameResponse response, int msgId, int actionId, int errorCode, string errorInfo)
+        /// <param name="session"></param>
+        /// <param name="parameters"></param>
+        /// <param name="opCode"></param>
+        /// <returns></returns>
+        public static RequestPackage GetResponsePackage(int actionId, GameSession session, Parameters parameters, sbyte opCode, object message)
         {
-            MessageHead head = new MessageHead(msgId, actionId, errorCode, errorInfo);
-            MessageStructure sb = new MessageStructure();
-            sb.WriteBuffer(head);
-            response.BinaryWrite(sb.PopBuffer());
-        }*/
+            int userId = session != null ? session.UserId : 0;
+            string sessionId = session != null ? session.SessionId : "";
+
+            var paramList = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase);
+            //init head
+            paramList["MsgId"] = "0";
+            paramList["St"] = "st";
+            paramList["Sid"] = sessionId;
+            paramList["Uid"] = userId.ToString();
+            paramList["ActionID"] = actionId.ToString();
+            if (parameters != null)
+            {
+                foreach (var parameter in parameters)
+                {
+                    paramList[parameter.Key] = parameter.Value.ToString();
+                }
+            }
+            RequestPackage requestPackage = new RequestPackage(0, sessionId, actionId, userId);
+            requestPackage.Params = paramList;
+            requestPackage.IsUrlParam = true;
+            requestPackage.OpCode = opCode;
+            requestPackage.Message = message;
+            requestPackage.Bind(session);
+            return requestPackage;
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="actionDispatcher"></param>
+        /// <param name="actionId"></param>
+        /// <param name="session"></param>
+        /// <param name="package"></param>
+        /// <returns></returns>
+        public static byte[] GetActionResponse(IActionDispatcher actionDispatcher, int actionId, GameSession session, RequestPackage package)
+        {
+            package.Bind(session);
+            var actionGetter = new HttpGet(package, session);
+            return ProcessActionResponse(actionDispatcher, actionId, actionGetter);
+        }
 
         /// <summary>
         /// 获取Action处理的输出字节流
         /// </summary>
         /// <returns></returns>
-        public static byte[] GetActionResponse(IActionDispatcher actionDispatcher, int actionId, BaseUser baseUser, string urlParam, out ActionGetter actionGetter)
+        private static byte[] ProcessActionResponse(IActionDispatcher actionDispatcher, int actionId, ActionGetter actionGetter)
         {
-            int userId = baseUser != null ? baseUser.GetUserId() : 0;
-            GameSession session = GameSession.Get(userId);
-            string sessionId = session != null ? session.SessionId : "";
-            string param = string.Format("MsgId={0}&St={1}&Sid={2}&Uid={3}&ActionID={4}{5}",
-                0,
-                "st",
-                sessionId,
-                userId,
-                actionId,
-                urlParam);
-
-            RequestPackage requestPackage = new RequestPackage(0, sessionId, actionId, userId);
-            requestPackage.UrlParam = param;
-            requestPackage.IsUrlParam = true;
-            requestPackage.Session = session;
-            requestPackage.ReceiveTime = DateTime.Now;
-            actionGetter = new HttpGet(requestPackage);
             BaseStruct baseStruct = FindRoute(GameEnvironment.Setting.ActionTypeName, actionGetter, actionId);
             SocketGameResponse response = new SocketGameResponse();
             response.WriteErrorCallback += actionDispatcher.ResponseError;
-            baseStruct.UserFactory = uid => { return baseUser; };
             baseStruct.SetPush();
             baseStruct.DoInit();
-            using (ILocking locking = baseStruct.RequestLock())
+            if (actionGetter.Session.EnterLock(actionId))
             {
-                if (locking.IsLocked)
+                try
                 {
                     if (!baseStruct.GetError() &&
                         baseStruct.ReadUrlElement() &&
@@ -265,6 +279,14 @@ namespace ZyGames.Framework.Game.Contract
                         baseStruct.WriteErrorAction(response);
                     }
                 }
+                finally
+                {
+                    actionGetter.Session.ExitLock(actionId);
+                }
+            }
+            else
+            {
+                baseStruct.WriteLockTimeoutAction(response, false);
             }
             return response.ReadByte();
         }
@@ -275,14 +297,13 @@ namespace ZyGames.Framework.Game.Contract
         /// <param name="baseStruct"></param>
         /// <param name="actionGetter"></param>
         /// <param name="response"></param>
-        /// <param name="userFactory"></param>
-        public static void Process(BaseStruct baseStruct, ActionGetter actionGetter, BaseGameResponse response, Func<int, BaseUser> userFactory)
+        public static void Process(BaseStruct baseStruct, ActionGetter actionGetter, BaseGameResponse response)
         {
-            baseStruct.UserFactory = userFactory;
+            int actionId = actionGetter.GetActionId();
             baseStruct.DoInit();
-            using (ILocking locking = baseStruct.RequestLock())
+            if (actionGetter.Session.EnterLock(actionId))
             {
-                if (locking.IsLocked)
+                try
                 {
                     if (!baseStruct.GetError() &&
                         baseStruct.ReadUrlElement() &&
@@ -296,117 +317,360 @@ namespace ZyGames.Framework.Game.Contract
                         baseStruct.WriteErrorAction(response);
                     }
                 }
+                finally
+                {
+                    actionGetter.Session.ExitLock(actionId);
+                }
+            }
+            else
+            {
+                baseStruct.WriteLockTimeoutAction(response);
             }
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="actionId"></param>
+        /// <param name="userList"></param>
+        /// <param name="parameter"></param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task BroadcastAsyncAction<T>(int actionId, List<T> userList, object parameter, Action<SocketAsyncResult> complateHandle, sbyte opCode = OpCode.Binary, int onlineInterval = 0)
+            where T : IUser
+        {
+            await System.Threading.Tasks.Task.Run(async () =>
+            {
+                await BroadcastAction(actionId, userList, parameter, (u, s, result) =>
+                {
+                    if (complateHandle != null) complateHandle(result);
+                }, opCode, onlineInterval);
+            });
+        }
 
         /// <summary>
-        /// 将指定的Action结果广播给指定范围的玩家
+        /// 
         /// </summary>
-        /// <typeparam name="T">BaseUser对象</typeparam>
-        /// <param name="actionId">指定的Action</param>
-        /// <param name="userList">指定范围的玩家</param>
-        /// <param name="parameters">请求参数</param>
-        /// <param name="successHandle">成功回调</param>
-        public static void BroadcastAction<T>(int actionId, List<T> userList, Parameters parameters, Action<T> successHandle) where T : BaseUser
+        /// <typeparam name="T"></typeparam>
+        /// <param name="actionId"></param>
+        /// <param name="userList"></param>
+        /// <param name="parameter"></param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task BroadcastAction<T>(int actionId, List<T> userList, object parameter, Action<SocketAsyncResult> complateHandle, sbyte opCode = OpCode.Binary, int onlineInterval = 0)
+         where T : IUser
         {
-            StringBuilder shareParam = new StringBuilder();
-            if (parameters != null)
+            await BroadcastAction(actionId, userList, parameter, (u, s, result) =>
             {
-                foreach (var parameter in parameters)
-                {
-                    shareParam.AppendFormat("&{0}={1}", parameter.Key, parameter.Value);
-                }
-            }
-            IActionDispatcher actionDispatcher = new ActionDispatcher();
-            ActionGetter actionParam;
-            byte[] sendData = GetActionResponse(actionDispatcher, actionId, null, shareParam.ToString(), out actionParam);
+                if (complateHandle != null) complateHandle(result);
+            }, opCode, onlineInterval);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="actionId"></param>
+        /// <param name="userList"></param>
+        /// <param name="parameter">Allow Parameters or Custom object as paramter</param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task BroadcastAction<T>(int actionId, List<T> userList, object parameter, Action<T, GameSession, SocketAsyncResult> complateHandle, sbyte opCode, int onlineInterval) where T : IUser
+        {
+            List<GameSession> sessionList = new List<GameSession>();
+            GameSession session;
             foreach (var user in userList)
             {
-                if (user == default(T))
+                session = GameSession.Get(user.GetUserId());
+                if (session == null)
                 {
-                    continue;
+                    complateHandle(user, null, new SocketAsyncResult(null) { Result = ResultCode.Close });
                 }
-                try
+                sessionList.Add(session);
+            }
+            if (sessionList.Count == 0) return;
+
+            RequestPackage package = parameter is Parameters
+                ? GetResponsePackage(actionId, sessionList[0], parameter as Parameters, opCode, null)
+                : GetResponsePackage(actionId, sessionList[0], null, opCode, parameter);
+            await BroadcastAction(actionId, sessionList, package, (s, result) =>
+            {
+                if (complateHandle != null)
                 {
-                    GameSession session = GameSession.Get(user.GetUserId());
-                    if (session != null)
+                    complateHandle((T)s.User, s, result);
+                }
+            }, onlineInterval);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="actionId"></param>
+        /// <param name="sessionList"></param>
+        /// <param name="package"></param>
+        /// <param name="complateHandle"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task BroadcastAction(int actionId, List<GameSession> sessionList, RequestPackage package, Action<GameSession, SocketAsyncResult> complateHandle, int onlineInterval)
+        {
+            try
+            {
+                if (sessionList.Count == 0) return;
+                if (sessionList.Exists(s => Equals(s, null)))
+                {
+                    throw new ArgumentNullException("Session is a null value.");
+                }
+
+                IActionDispatcher actionDispatcher = new ScutActionDispatcher();
+                byte[] sendBuffer = GetActionResponse(actionDispatcher, actionId, sessionList[0], package);
+
+                foreach (var session in sessionList)
+                {
+                    GameSession temp = session;
+                    try
                     {
-                        if (session.SendAsync(sendData, 0, sendData.Length))
+                        if (onlineInterval <= 0 || session.LastActivityTime > MathUtils.Now.AddSeconds(-onlineInterval))
                         {
-                            if (successHandle != null) successHandle(user);
+                            await session.SendAsync(package.OpCode, sendBuffer, 0, sendBuffer.Length, result =>
+                            {
+                                if (complateHandle != null)
+                                {
+                                    complateHandle(temp, result);
+                                }
+                            });
+                        }
+                        else
+                        {
+                            if (complateHandle != null)
+                            {
+                                complateHandle(temp, new SocketAsyncResult(sendBuffer) { Result = ResultCode.Close });
+                            }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        if (complateHandle != null)
+                        {
+                            complateHandle(temp, new SocketAsyncResult(sendBuffer) { Result = ResultCode.Error, Error = ex });
+                        }
+                        TraceLog.WriteError("BroadcastAction  action:{0} userId:{1} error:{2}", actionId, session.UserId, ex);
+                    }
                 }
-                catch (Exception ex)
+            }
+            catch (Exception ex)
+            {
+                TraceLog.WriteError("BroadcastAction  action:{0} error:{1}", actionId, ex);
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="userList"></param>
+        /// <param name="actionId"></param>
+        /// <param name="parameter"></param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task SendAsyncAction<T>(List<T> userList, int actionId, object parameter, Action<SocketAsyncResult> complateHandle, sbyte opCode = OpCode.Binary, int onlineInterval = 0)
+            where T : IUser
+        {
+            await System.Threading.Tasks.Task.Run(async () =>
+            {
+                await SendAction(userList, actionId, parameter, (u, s, result) =>
                 {
-                    TraceLog.WriteError("BroadcastAction  action:{0} userId:{1} error:{2}", actionId, user.PersonalId, ex);
+                    if (complateHandle != null) complateHandle(result);
+                }, opCode, onlineInterval);
+            });
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="userList"></param>
+        /// <param name="actionId"></param>
+        /// <param name="parameter"></param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task SendAction<T>(List<T> userList, int actionId, object parameter, Action<SocketAsyncResult> complateHandle, sbyte opCode = OpCode.Binary, int onlineInterval = 0)
+            where T : IUser
+        {
+            await SendAction(userList, actionId, parameter, (u, s, result) =>
+            {
+                if (complateHandle != null) complateHandle(result);
+            }, opCode, onlineInterval);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="userList"></param>
+        /// <param name="actionId"></param>
+        /// <param name="parameter">Allow Parameters or Custom object as paramter</param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        public static async System.Threading.Tasks.Task SendAction<T>(List<T> userList, int actionId, object parameter, Action<T, GameSession, SocketAsyncResult> complateHandle, sbyte opCode, int onlineInterval) where T : IUser
+        {
+            foreach (var user in userList)
+            {
+                T temp = user;
+                GameSession session = GameSession.Get(user.GetUserId());
+                if (session != null)
+                {
+                    RequestPackage package = parameter is Parameters
+                        ? GetResponsePackage(actionId, session, parameter as Parameters, opCode, null)
+                        : GetResponsePackage(actionId, session, null, opCode, parameter);
+                    await SendAction(session, actionId, package, (s, result) =>
+                    {
+                        if (complateHandle != null)
+                        {
+                            complateHandle(temp, session, result);
+                        }
+                    }, onlineInterval);
+                }
+                else
+                {
+                    if (complateHandle != null)
+                    {
+                        complateHandle(temp, null, new SocketAsyncResult(null) { Result = ResultCode.Close });
+                    }
                 }
             }
         }
 
         /// <summary>
-        /// 给指定范围的每个玩家发送指定的Action结果
+        /// 
         /// </summary>
-        /// <typeparam name="T">BaseUser对象</typeparam>
-        /// <param name="userList">指定范围的玩家</param>
-        /// <param name="actionId">指定的Action</param>
-        /// <param name="parameters">请求参数</param>
-        /// <param name="successHandle">成功回调</param>
-        public static void SendAsyncAction<T>(List<T> userList, int actionId, Parameters parameters, Action<ActionGetter> successHandle) where T : BaseUser
+        /// <param name="sessionList"></param>
+        /// <param name="actionId"></param>
+        /// <param name="parameter">Allow Parameters or Custom object as paramter</param>
+        /// <param name="complateHandle"></param>
+        /// <param name="opCode"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task SendAction(List<GameSession> sessionList, int actionId, object parameter, Action<GameSession, SocketAsyncResult> complateHandle, sbyte opCode, int onlineInterval)
         {
-            StringBuilder shareParam = new StringBuilder();
-            if (parameters != null)
+            foreach (var session in sessionList)
             {
-                foreach (var parameter in parameters)
+                GameSession temp = session;
+                if (session != null)
                 {
-                    shareParam.AppendFormat("&{0}={1}", parameter.Key, parameter.Value);
-                }
-            }
-            IActionDispatcher actionDispatcher = new ActionDispatcher();
-            foreach (var user in userList)
-            {
-                if (user == default(T))
-                {
-                    continue;
-                }
-                try
-                {
-                    var session = GameSession.Get(user.GetUserId());
-                    ActionGetter actionParam;
-                    byte[] sendData = GetActionResponse(actionDispatcher, actionId, user, shareParam.ToString(), out actionParam);
-                    if (session != null &&
-                        session.SendAsync(sendData, 0, sendData.Length) &&
-                        actionParam != null)
+                    RequestPackage package = parameter is Parameters
+                        ? GetResponsePackage(actionId, session, parameter as Parameters, opCode, null)
+                        : GetResponsePackage(actionId, session, null, opCode, parameter);
+                    await SendAction(session, actionId, package, (s, result) =>
                     {
-                        successHandle(actionParam);
-                    }
+                        if (complateHandle != null)
+                        {
+                            complateHandle(temp, result);
+                        }
+                    }, onlineInterval);
                 }
-                catch (Exception ex)
+                else
                 {
-                    TraceLog.WriteError("SendToClient action:{0} userId:{1} error:{2}", actionId, user.PersonalId, ex);
+                    if (complateHandle != null)
+                    {
+                        complateHandle(temp, new SocketAsyncResult(null) { Result = ResultCode.Close });
+                    }
                 }
             }
         }
 
-
-        internal static BaseStruct FindScriptRoute(ActionGetter actionGetter, int actionID)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="session"></param>
+        /// <param name="actionId"></param>
+        /// <param name="package"></param>
+        /// <param name="complateHandle"></param>
+        /// <param name="onlineInterval"></param>
+        /// <returns></returns>
+        public static async System.Threading.Tasks.Task SendAction(GameSession session, int actionId, RequestPackage package, Action<GameSession, SocketAsyncResult> complateHandle, int onlineInterval)
         {
-            string scriptTypeName = string.Format(GameEnvironment.Setting.ScriptTypeName, actionID);
+            IActionDispatcher actionDispatcher = new ScutActionDispatcher();
+            GameSession temp = session;
+            byte[] sendBuffer = null;
+            try
+            {
+                sendBuffer = GetActionResponse(actionDispatcher, actionId, session, package);
+                if ((onlineInterval <= 0 || session.LastActivityTime > MathUtils.Now.AddSeconds(-onlineInterval)))
+                {
+                    await session.SendAsync(package.OpCode, sendBuffer, 0, sendBuffer.Length, result =>
+                    {
+                        if (complateHandle != null)
+                        {
+                            complateHandle(temp, result);
+                        }
+                    });
+                }
+                else
+                {
+                    if (complateHandle != null)
+                    {
+                        complateHandle(temp, new SocketAsyncResult(sendBuffer) { Result = ResultCode.Close });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (complateHandle != null)
+                {
+                    complateHandle(temp, new SocketAsyncResult(sendBuffer) { Result = ResultCode.Error, Error = ex });
+                }
+                TraceLog.WriteError("SendToClient action:{0} userId:{1} error:{2}", actionId, session.UserId, ex);
+            }
+        }
+
+
+        internal static BaseStruct FindScriptRoute(ActionGetter actionGetter, int actionId)
+        {
+            string scriptTypeName = string.Format(GameEnvironment.Setting.ScriptTypeName, actionId);
             string scriptCode = "";
 
-            if (!ScriptEngines.DisablePython) //By Seamoon 在Python禁用的情况下，就没有必要再加载了
+            if (!ScriptEngines.SettupInfo.DisablePython) //By Seamoon 在Python禁用的情况下，就没有必要再加载了
             {
-                scriptCode = string.Format("{0}/action/action{1}.py", ScriptEngines.PythonDirName, actionID);
-                dynamic scriptScope = ScriptEngines.Execute(scriptCode, null);
+                scriptCode = string.Format("action.action{0}", actionId);
+                dynamic scriptScope = ScriptEngines.ExecutePython(scriptCode);
                 if (scriptScope != null)
                 {
-                    bool ignoreAuthorize = _ignoreAuthorizeSet.Contains(actionID);
-                    return new ScriptAction((short)actionID, actionGetter, scriptScope, ignoreAuthorize);
+                    bool ignoreAuthorize = _ignoreAuthorizeSet.Contains(actionId);
+                    if (actionGetter.Session.IsWebSocket)
+                    {
+                        return new JsonScriptAction(ScriptType.Python, actionId, actionGetter, scriptScope, ignoreAuthorize);
+                    }
+                    return new ScriptAction(ScriptType.Python, actionId, actionGetter, scriptScope, ignoreAuthorize);
+                }
+            }
+            if (!ScriptEngines.SettupInfo.DisableLua)
+            {
+                scriptCode = string.Format("Action{0}", actionId);
+                dynamic scriptScope = ScriptEngines.ExecuteLua("GetTable", scriptCode, actionId);
+                if (scriptScope != null)
+                {
+                    bool ignoreAuthorize = _ignoreAuthorizeSet.Contains(actionId);
+                    if (actionGetter.Session.IsWebSocket)
+                    {
+                        return new JsonLuaAction(actionId, actionGetter, scriptScope, ignoreAuthorize);
+                    }
+                    return new LuaAction(actionId, actionGetter, scriptScope, ignoreAuthorize);
                 }
             }
 
-            scriptCode = string.Format("{0}/action/action{1}.cs", ScriptEngines.CSharpDirName, actionID);
+            scriptCode = string.Format("action.action{0}", actionId);
             BaseStruct baseStruct = ScriptEngines.Execute(scriptCode, scriptTypeName, actionGetter);
             if (baseStruct != null) return baseStruct;
             return null;
@@ -433,7 +697,7 @@ namespace ZyGames.Framework.Game.Contract
                     throw new Exception(string.Format("The {0} action init error", actionId), ex);
                 }
             }
-            throw new NotSupportedException(string.Format("Not found {0} action Interface.", actionId));
+            throw new NotSupportedException(string.Format("Not found script action{0}, please check script path setting.", actionId));
         }
     }
 }
